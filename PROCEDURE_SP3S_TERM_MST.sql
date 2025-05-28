@@ -1,0 +1,60 @@
+CREATE PROCEDURE SP3S_TERM_MST
+(
+	@nQueryID	NUMERIC(2),
+	@cWhere		NVARCHAR(MAX)=''
+)
+AS
+BEGIN
+	/*
+		STRUCTURE CHANGE
+		ALTER TABLE PPC_TERM_CONDITION_DET ADD SR_NO NUMERIC(2)
+		EXEC SP3S_TERM_MST @nQueryID=1,@cWhere=''
+		SELECT CAST('' AS VARCHAR(100)) AS SP_ID,c.job_name, X.XN_DESC, b.sr_no,b.remarks,b.row_id, a.*
+		INTO PPC_TERM_CONDITION_UPLOAD
+		FROM PPC_TERM_CONDITION_MST a 
+		join PPC_TERM_CONDITION_DET b on a.memo_id = b.memo_id 
+		JOIN JOBS c ON c.job_code=a.JOB_CODE
+		JOIN
+		(
+			SELECT 'PO' AS XN_TYPE,'Purchase Order' AS XN_DESC
+			UNION 
+			SELECT 'JWI' AS XN_TYPE,'Job Order Issue' AS XN_DESC
+		)X ON X.XN_TYPE=a.XN_TYPE
+	*/
+	IF @nQueryID=1
+	BEGIN
+		SELECT CAST('' AS VARCHAR(100)) AS SP_ID, c.job_name, X.XN_DESC, a.*
+		FROM PPC_TERM_CONDITION_MST a 
+		LEFT OUTER JOIN JOBS c ON c.job_code=a.JOB_CODE
+		JOIN
+		(
+			SELECT 'PO' AS XN_TYPE,'Purchase Order' AS XN_DESC
+			UNION 
+			SELECT 'JWI' AS XN_TYPE,'Job Work Issue' AS XN_DESC
+		)X ON X.XN_TYPE=a.XN_TYPE
+		where  a.memo_id = @cWhere
+	END
+	ELSE 	IF @nQueryID=2
+	BEGIN
+		SELECT CAST('' AS VARCHAR(100)) AS SP_ID, a.*
+		FROM PPC_TERM_CONDITION_DET a 
+		where  a.memo_id = @cWhere
+		order by A.sr_no
+	END
+	ELSE IF @nQueryID=3
+	BEGIN
+		SELECT '' AS XN_TYPE,'---Select---' AS XN_DESC
+		UNION 
+		SELECT 'PO' AS XN_TYPE,'Purchase Order' AS XN_DESC
+		UNION 
+		SELECT 'JWI' AS XN_TYPE,'Job Work Issue' AS XN_DESC
+		ORDER by XN_TYPE
+	END
+	ELSE IF @nQueryID=4
+	BEGIN
+		SELECT JOB_CODE,JOB_NAME FROM JOBS WHERE JOB_CODE<>'0000000'
+		UNION 
+		SELECT '' AS JOB_CODE,'---SELECT---' AS JOB_NAME
+		ORDER BY JOB_NAME,JOB_CODE
+	END
+END

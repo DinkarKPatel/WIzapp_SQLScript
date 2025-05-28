@@ -1,0 +1,89 @@
+create PROCEDURE SP3S_JOBWORK_RECEIVE_GETMEMONO
+(
+	@cQueryStr	VARCHAR(100)='',
+	@cWhere		VARCHAR(100)='%',
+	@XNTYPE VARCHAR(50)=''
+)
+AS
+BEGIN
+	DECLARE @cCMD NVARCHAR(MAX)
+	SET @cCMD='SELECT '''' AS MEMO_NO,'''' AS MEMO_DT,'''' as MEMO_ID WHERE 1=2'
+	IF @cQueryStr='BUYER_ORDER_NO'
+	BEGIN
+
+			SET @cCMD=N'SELECT TOP 100 order_no AS MEMO_NO,convert(varchar(10), order_dt,105) AS MEMO_DT,order_id as MEMO_ID
+			FROM BUYER_ORDER_MST(NOLOCK)
+			WHERE CANCELLED=0
+			AND order_no LIKE '''+@cWhere+''''
+
+
+
+	END
+	ELSE 	IF @cQueryStr='BUYER_ORDER_REF_NO'
+	BEGIN
+		SET @cCMD=N'SELECT TOP 100 Ref_no AS MEMO_NO,convert(varchar(10), order_dt,105) AS MEMO_DT,order_id AS MEMO_ID
+			FROM BUYER_ORDER_MST(NOLOCK)
+			WHERE CANCELLED=0
+			AND ref_no LIKE '''+@cWhere+''''
+	END
+	ELSE IF @cQueryStr='JOB_CARD_NO'
+	BEGIN
+
+		  SET @cCMD=N'SELECT TOP 100 MEMO_NO, convert(varchar(10), MEMO_DT,105) as MEMO_DT, MEMO_ID
+			FROM ORD_PLAN_MST(NOLOCK)
+			WHERE CANCELLED=0 AND ISNULL(SHORT_CLOSE,0)<>1
+			AND memo_no LIKE '''+@cWhere+''''
+	     
+		 --IF @XNTYPE='JWI'
+		 --BEGIN
+
+		 --DECLARE @CPMTSTOCKFILTER VARCHAR(100)
+		 --set @CPMTSTOCKFILTER=''
+		 
+		 -- IF @XNTYPE IN('JWI','TTM')
+		 --    SET @CPMTSTOCKFILTER=' HAVING SUM( PMT.QUANTITY_IN_STOCK) >0 '
+		 -- ELSE IF @XNTYPE='JWR'
+		 --     SET @CPMTSTOCKFILTER=' HAVING SUM( PMT.QUANTITY_IN_STOCK) =0 '
+		 -- ELSE 
+		 --      SET @CPMTSTOCKFILTER='  '
+
+			--SET @CCMD=N'SELECT TOP 100 MEMO_NO, MEMO_DT, A.MEMO_ID
+			--FROM
+			--(
+			-- SELECT A.MEMO_ID  ,A.MEMO_DT,A.MEMO_NO
+			--  FROM ORD_PLAN_MST A (NOLOCK)
+			--  JOIN ORD_PLAN_DET B (NOLOCK) ON A.MEMO_ID=B.MEMO_ID 
+			--  JOIN ORD_PLAN_BARCODE_DET C (NOLOCK) ON C.REFROW_ID =B.ROW_ID 
+			--  JOIN JOBWORK_PMT PMT (NOLOCK) ON C.PRODUCT_CODE =PMT.PRODUCT_CODE 
+			--  WHERE A.CANCELLED=0
+			--  AND MEMO_NO LIKE '''+@CWHERE+'''
+			--  GROUP BY A.MEMO_ID  ,A.MEMO_DT,A.MEMO_NO
+			--   '+@CPMTSTOCKFILTER+'
+
+			--) A
+		 --   '
+
+
+		-- END
+		-- else
+		-- begin
+		--  SET @cCMD=N'SELECT TOP 100 MEMO_NO, MEMO_DT, MEMO_ID
+		--	FROM ORD_PLAN_MST(NOLOCK)
+		--	WHERE CANCELLED=0
+		--	AND memo_no LIKE '''+@cWhere+''''
+		--end
+	END
+	ELSE IF @cQueryStr='jobwork_issue_no'
+	BEGIN
+
+		  SET @cCMD=N'SELECT TOP 100 issue_no MEMO_NO, convert(varchar(10), issue_dt,105) as MEMO_DT,issue_id MEMO_ID
+			FROM jobwork_issue_mst (NOLOCK)
+			WHERE CANCELLED=0 
+			AND issue_no LIKE '''+@cWhere+''''
+     END
+
+	
+	PRINT @ccmd
+	EXEC SP_EXECUTESQL @ccmd
+
+END

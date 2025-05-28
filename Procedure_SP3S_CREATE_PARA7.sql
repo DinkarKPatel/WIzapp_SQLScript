@@ -1,0 +1,189 @@
+create	Procedure SP3S_CREATE_PARA7--(LocId 3 digit change by Sanjay:06-11-2024)
+as
+begin
+
+BEGIN TRY             
+BEGIN TRAN   
+
+      IF NOT EXISTS (SELECT TOP 1 'U' FROM PARA7 WHERE PARA7_CODE='0000000')
+	  begin
+	       INSERT PARA7	( INACTIVE, LAST_UPDATE, PARA7_CODE, PARA7_NAME )  
+		   SELECT 0 INACTIVE,GETDATE() LAST_UPDATE,'0000000' PARA7_CODE,'' PARA7_NAME 
+		
+	  end
+
+      
+	  DECLARE @CERRMSG VARCHAR(1000),@CSTEP varchar(10),@CMEMOPREFIX VARCHAR(4),
+	           @CLOCID VARCHAR(4),@CMEMONOVAL varchar(10),@NMEMONOLEN NUMERIC(5,0)
+	  set @CERRMSG=''
+	  SET @NMEMONOLEN=9
+
+	
+		SELECT @CLOCID=VALUE  FROM CONFIG WHERE CONFIG_OPTION ='LOCATION_ID'
+
+	  SET @CSTEP='10'
+
+		
+	
+		DECLARE @CCOLNAME VARCHAR(1000),@CCOLUMNSEPARATOR VARCHAR(5),@ccolfilter varchar(20)
+	   SELECT @CCOLUMNSEPARATOR=SEPARATOR_KEY FROM INV_SKU_COL_LIST
+
+	   IF ISNULL(@CCOLUMNSEPARATOR,'')=''
+	   SET @CCOLUMNSEPARATOR=''
+	  
+
+	
+	
+		SELECT  @CCOLNAME=ISNULL(@CCOLNAME +'+'+''''+@CCOLUMNSEPARATOR+'''+','') +  (CASE WHEN COL_VALUE='PRODUCT_CODE' THEN 'LEFT(sku.PRODUCT_CODE, ISNULL(NULLIF(CHARINDEX (''@'',sku.PRODUCT_CODE)-1,-1),LEN(sku.PRODUCT_CODE )))' 
+		WHEN COL_VALUE='DEPT_ID' THEN 'LOC_VIEW.DEPT_ID' ELSE COL_EXPR  END )  
+		FROM INV_SKU_COL_LIST a
+		WHERE ISNULL(FOR_SKU ,0)=1
+		order by isnull(sku_order,0)
+
+		IF OBJECT_ID('TEMPDB..#TMPPARA7_DET','U') IS NOT NULL
+		   DROP TABLE #TMPPARA7_DET
+		  CREATE TABLE #TMPPARA7_DET(Product_code VARCHAR(50),PARA7_NAME VARCHAR(5000),PARA7_CODE VARCHAR(10))
+
+
+        SET @CSTEP='20'
+         DECLARE @DTSQL NVARCHAR(MAX)
+
+	   SET @DTSQL=N'
+			SELECT SKU.product_code, '+@CCOLNAME+' AS PARA7_NAME,cast('''' as varchar(10)) AS PARA7_CODE
+			FROM   SKU (NOLOCK) 
+			JOIN  article (NOLOCK)  ON ARTICLE.ARTICLE_CODE = SKU.ARTICLE_CODE
+			JOIN  PARA1 (NOLOCK) ON PARA1.PARA1_CODE = SKU.PARA1_CODE
+			JOIN  PARA2 (NOLOCK) ON PARA2.PARA2_CODE = SKU.PARA2_CODE
+			JOIN  PARA3 (NOLOCK)  ON PARA3.PARA3_CODE = SKU.PARA3_CODE
+			JOIN  PARA4 (NOLOCK) ON PARA4.PARA4_CODE = SKU.PARA4_CODE
+			JOIN  PARA5 (NOLOCK) ON PARA5.PARA5_CODE	= SKU.PARA5_CODE
+			JOIN  PARA6 (NOLOCK)  ON PARA6.PARA6_CODE = SKU.PARA6_CODE
+			where substring(SKU.product_Code,3,5)<> ''-RPR-'' '
+
+		
+		PRINT @DTSQL
+		INSERT INTO #TMPPARA7_DET(Product_code,PARA7_NAME,PARA7_CODE)
+		EXEC SP_EXECUTESQL @DTSQL
+		
+	
+
+        SET @CSTEP='25'
+        
+			IF OBJECT_ID('TEMPDB..#TMPPARA7','U') IS NOT NULL
+		       DROP TABLE #TMPPARA7
+
+		   SELECT A.PARA7_NAME,A.PARA7_CODE  ,CAST(0 AS NUMERIC(10,0)) AS SRNO
+		       INTO #TMPPARA7
+		   FROM #TMPPARA7_DET A 
+		   LEFT JOIN PARA7 B (NOLOCK) ON A.PARA7_NAME =B.PARA7_NAME 
+		   WHERE B.PARA7_NAME IS NULL
+		   GROUP BY  A.PARA7_NAME,A.PARA7_CODE  
+
+        SET @CSTEP='26'
+        
+		delete a  from #TMPPARA7 a 
+		join para7 b with (nolock) on a.PARA7_NAME =b.PARA7_NAME 
+
+
+		IF NOT  EXISTS (SELECT TOP 1 'U' FROM #TMPPARA7)
+		GOTO lblUPDATE_SKU 
+
+		SET @CSTEP='30'
+
+		LBLGENKEY:
+
+		;WITH CTE AS
+		(
+		SELECT *,SR=ROW_NUMBER() OVER (ORDER BY PARA7_NAME) 
+		FROM #TMPPARA7
+		)
+		UPDATE CTE SET  SRNO=SR
+
+		SET @CSTEP='40'
+		SET @CMEMOPREFIX=@CLOCID
+		SET @CSTEP='45'
+	
+		 EXEC DBO.GETNEXTKEY 'PARA7', 'PARA7_CODE', 9, @CMEMOPREFIX, 1, '', 2, @CMEMONOVAL OUTPUT 
+		
+		   SET @CSTEP='50'                        
+		   IF EXISTS(SELECT TOP 1 'U' FROM PARA7 WHERE PARA7_CODE=@CMEMONOVAL )                        
+			GOTO LBLGENKEY    
+
+
+		UPDATE #TMPPARA7 SET PARA7_CODE=RTRIM(LTRIM(@CMEMOPREFIX+REPLICATE('0',9-LEN(LTRIM(RTRIM(@CMEMOPREFIX+CAST(RIGHT(@CMEMONOVAL,6)+SRNO-1 AS VARCHAR(10))))))+CAST(RIGHT(@CMEMONOVAL,6)+SRNO-1 AS VARCHAR(10))))            
+
+		UPDATE A SET PARA7_CODE ='' FROM #TMPPARA7 A
+		JOIN PARA7 P7 (NOLOCK) ON P7.PARA7_CODE =A.PARA7_CODE
+
+		IF EXISTS (SELECT TOP 1 'U' FROM #TMPPARA7 WHERE ISNULL(PARA7_CODE,'')='')
+		   GOTO LBLGENKEY
+
+
+		 SELECT LEFT (PARA7_CODE,2) AS PREFIX ,MAX(PARA7_CODE) AS MAXCM_NO             
+		 INTO #TMPKEYS            
+		 FROM #TMPPARA7 A            
+		 GROUP BY LEFT (PARA7_CODE,2)          
+            
+		 UPDATE A SET LASTKEYVAL =B.MAXCM_NO             
+		 FROM KEYS  A            
+		 JOIN #TMPKEYS B ON A.PREFIX=B.PREFIX 
+		 WHERE TABLENAME='PARA7'
+            
+		 INSERT PARA7	( INACTIVE, LAST_UPDATE, PARA7_CODE, PARA7_NAME )  
+		 SELECT 0 INACTIVE,GETDATE() LAST_UPDATE, PARA7_CODE, PARA7_NAME 
+		 FROM #TMPPARA7
+
+
+		 lblUPDATE_SKU:
+
+
+		UPDATE A SET PARA7_CODE=B.PARA7_CODE 
+		FROM #TMPPARA7_DET A
+		JOIN PARA7 B ON A.PARA7_NAME =B.PARA7_NAME
+
+		Update a set para7_code=b.PARA7_CODE
+		from sku  a with (nolock)
+		join #TMPPARA7_DET b on a.product_code=b.Product_code
+		where ISNULL(a.para7_code,'')<>b.PARA7_CODE
+
+		Update a set para7_name=b.para7_name
+		from sku_names a with (nolock)
+		join #TMPPARA7_DET b on a.product_code=b.Product_code
+        where ISNULL(a.para7_name,'')<>b.para7_name
+
+GOTO END_PROC                        
+                          
+END TRY                        
+                         
+BEGIN CATCH                       
+  PRINT 'ENTER CATCH BLOCK'                     
+  SET @CERRMSG='SP3S_CREATE_PARA7  : AT STEP - '+@CSTEP+', MESSAGE - '+ERROR_MESSAGE()                                   
+  GOTO END_PROC                         
+END CATCH                        
+                         
+END_PROC:         
+
+IF @@TRANCOUNT>0                        
+  BEGIN                   
+              
+	   IF ISNULL(@CERRMSG,'')<>''                          
+	   BEGIN              
+                    
+		 PRINT 'ROLLBACK TRANSACTION SP3S_CREATE_PARA7'                        
+		 ROLLBACK             
+      
+             
+	   END         
+	   ELSE                        
+	   BEGIN              
+            
+		   PRINT 'COMMIT SP3S_CREATE_PARA7'                        
+		   COMMIT              
+             
+	   END               
+                           
+  END     
+
+  select @CERRMSG AS Errmsg
+
+ END

@@ -1,0 +1,8 @@
+DECLARE @cCmd NVARCHAR(MAX)
+IF EXISTS (SELECT * FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE CONSTRAINT_NAME='FK_aprdet_apd')
+BEGIN
+	SET @cCmd=N'alter table approval_return_det drop constraint FK_aprdet_apd'
+	EXEC SP_EXECUTESQL @cCmd
+END
+
+

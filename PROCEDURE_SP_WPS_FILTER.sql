@@ -1,0 +1,68 @@
+create PROCEDURE SP_WPS_FILTER--(LocId 3 digit change by Sanjay:04-11-2024)
+(  
+@NPS_MODE NUMERIC(1),            --@INV_TYPE:0 FOR ALL, 1 FOR PARTY 2 FOR   
+@NENTRY_MODE NUMERIC(1),            --@NINV_MODE:0 FOR ALL,1 FOR DIRECT,2 FOR BOX  
+@DPS_FROMDATE DATETIME,    /* @DFROMDATE:2013-04-20 FOR FILTER FROM DATE */  
+@DPS_TODATE DATETIME,     /* @DTODATE:2014-08-05 FOR FILTER TO DATE */  
+@CAC_CODE VARCHAR(100),    /* @CAC_CODE:WHOLESALE FROM AC_CODE */  
+@CPARTY_DEPT_ID VARCHAR(100),       /* @CDEPT_ID:WHOLESALE FROM DEPT_ID */  
+@NCANCELLED NUMERIC(1),           /* @NCANCELLED:0 OR 1 CHECK CANCLE STATUS */              
+@CSTATUS NUMERIC(1)='',  
+@LOC VARCHAR(4)=''  
+)  
+AS    
+BEGIN    
+     dECLARE @cCmd nvaRCHaR(MAx)
+	 
+	 if ObJeCt_ID('tempdb..#TBLINV','u') is Not Null
+		dROP taBle #TBLINV
+	
+	 cREatE TABLe #TBLINV (memo_id varchar(40),ps_id varchar(40),ps_no varchar(20),ps_dt datetime,
+	 ac_name varchar(400),address varchar(500),city varchar(500),state varchar(200),pincode varchar(50),
+	 username varchar(200),dept_name varchar(200),dept_id VARchar(4),TOTAL_QTY numeric(10,2),TOTAL_QTY_STR varchar(200),   
+	 USER_CODE char(7),EDT_USERNAME varchar(200),CANCELLED varchar(50),PS_MODE numeric(1,0),
+	 REMARKS varchar(3000),AMOUNT_IN_WORDS varchar(300),SUBTOTAL numeric(10,2),NET_AMOUNT numeric(10,2),
+	 WSL_INV_ID varchar(40),FIN_YEAR varchar(5),INVOICE_NO varchar(50))
+	  	             
+	 SEt @cCmd=N'SELECT T1.PS_ID AS MEMO_ID,  T1.PS_ID,T1.PS_NO,T1.PS_DT,ISNULL(T4.AC_NAME,'''') AS AC_NAME,  
+	 T4.ADDRESS0+''''+T4.ADDRESS1+''''+T4.ADDRESS2 +''''+ T4.AREA_NAME AS [ADDRESS],T4.CITY,T4.[STATE],T4.PINCODE,  
+	 T2.USERNAME,ISNULL(T6.DEPT_NAME,'''') AS DEPT_NAME ,T6.DEPT_ID,  
+	 T1.TOTAL_QUANTITY AS [TOTAL_QTY],  
+	 T1.TOTAL_QUANTITY_STR AS [TOTAL_QTY_STR],   
+	 T1.USER_CODE, 
+	 u1.username as EDT_USERNAME,T1.CANCELLED, T1.PS_MODE,
+	 T1.REMARKS,'''' AS AMOUNT_IN_WORDS,T1.SUBTOTAL,T1.SUBTOTAL AS NET_AMOUNT,T1.WSL_INV_ID
+	 ,T1.FIN_YEAR , ISNULL(T1.WSL_INV_ID,'''')  
+	 FROM WPS_MST T1 (NOLOCK)      
+	 JOIN USERS T2   (NOLOCK) ON T1.USER_CODE = T2.USER_CODE      
+	 JOIN LMV01106 T4 ON T4.AC_CODE = T1.AC_CODE  
+	 LEFT OUTER JOIN LOCATION T6 ON T6.DEPT_ID=T1.PARTY_DEPT_ID  
+	 LEFT OUTER JOIN LOCATION  L (NOLOCK) ON t1.location_code = L.DEPT_ID  
+	 LEFT OUTER JOIN users u1 ON T1.EDT_USER_CODE=U1.user_code   
+	 WHERE '+(Case WHeN @NPS_MODE=0 TheN '1=1' Else 'T1.PS_MODE='+sTr(@NPS_MODE) end)+'      
+	 AND '+(CAse WHen @NENTRY_MODE=0 theN '1=1' elSe 'T1.ENTRY_MODE='+sTr(@NENTRY_MODE) End)+'     
+	 AND T1.PS_DT  BETWEEN  '''+cONvErt(varchar,@DPS_FROMDATE,110)+''' AND '''+convERT(VarchAR,@DPS_TODATE,110)+'''  
+	 AND '+(CasE when @CAC_CODE='' then '1=1' else 'T1.AC_CODE='''+@CAC_CODE+'''' end)+'      
+	 AND '+(case when @CPARTY_DEPT_ID='' then '1=1' else 'T1.PARTY_DEPT_ID='''+@CPARTY_DEPT_ID+'''' end)+'    
+	 AND '+(case when @LOC='' then '1=1' ELse 't1.location_code='''+@LOC+'''' End)+
+	 ' AND '+(case when @NCANCELLED=2 THEN '1=1' ELse 'T1.CANCELLED='+Str(@NCANCELLED) EnD)+'
+	 aNd '+(CASe WheN @CSTATUS=1 thEN  'ISNULL(T1.WSL_INV_ID,'''')='''''
+				 WheN @CSTATUS=2 thEN  'ISNULL(T1.WSL_INV_ID,'''')<>''''' elsE '1=1' EnD) 
+	
+	 print @cCmd
+
+	 iNsErT #TBLINV (memo_id,ps_id,ps_no,ps_dt,ac_name,address,city,state,pincode,
+	 username ,dept_name,dept_id,total_qty,TOTAL_QTY_STR ,USER_CODE,EDT_USERNAME,CANCELLED,PS_MODE,
+	 REMARKS,AMOUNT_IN_WORDS,SUBTOTAL,NET_AMOUNT,
+	 WSL_INV_ID ,FIN_YEAR,INVOICE_NO)
+	 exec sp_executesql @cCmd
+
+    SELECT MEMO_ID,  PS_ID,PS_NO,PS_DT,AC_NAME,[ADDRESS],CITY,[STATE],PINCODE,  
+	 USERNAME,DEPT_NAME ,DEPT_ID,TOTAL_QTY,TOTAL_QTY_STR,USER_CODE, EDT_USERNAME,
+ 	 (CASE WHEN CANCELLED ='1' THEN 'CANCELLED' ELSE '' END) AS CANCELLED,  
+	 (CASE WHEN PS_MODE =1 THEN 'PARTY INVOICE' ELSE 'GROUP INVOICE' END) AS  INVOICE_TYPE,   
+	  REMARKS,'' AS AMOUNT_IN_WORDS,SUBTOTAL,NET_AMOUNT,  
+	 CASE ISNULL(WSL_INV_ID,'') WHEN '' THEN 'PENDING' ELSE 'SETTLED' END AS [STATUS]  
+	 ,FIN_YEAR , INVOICE_NO,CASE  ISNULL(WSL_INV_ID,'') WHEN '' THEN 1 ELSE 2 END [STATUSTYPE]  
+	 from #TBLINV  
+END 

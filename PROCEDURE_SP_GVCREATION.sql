@@ -1,0 +1,87 @@
+create PROCEDURE SP_GVCREATION
+(  
+	 @CQUERYID			NUMERIC(2),  
+	 @CWHERE			VARCHAR(MAX)='',  
+	 @CFINYEAR			VARCHAR(5)='',  
+	 @CDEPTID			VARCHAR(4)='',  
+	 @NNAVMODE			NUMERIC(2)=1,  
+	 @CWIZAPPUSERCODE	VARCHAR(10)='',  
+	 @CFROMDT			DATETIME='',  
+	 @CTODT				DATETIME='',
+	 @CREFMEMOID		VARCHAR(50)=''
+) 
+AS  
+BEGIN  
+--(dinkar) Replace  left(memoid,2) to Location_code 
+DECLARE @CCMD NVARCHAR(MAX),@CFLATDISC VARCHAR(10)  
+SET @CCMD=''  
+    IF @CQUERYID=1  
+  GOTO LBLCMMLU  
+ ELSE IF @CQUERYID=2  
+  GOTO LBLCMM01106  
+ ELSE IF @CQUERYID=3  
+  GOTO LBLCMD01106  
+ ELSE IF @CQUERYID=4  
+  GOTO LBLSCHEMESLOV
+ELSE IF @CQUERYID=5  
+  GOTO LBLLOV
+ELSE   
+  GOTO LAST  
+
+LBLCMMLU:  
+  EXECUTE SP_NAVIGATE 'GV_GEN_MST',@NNAVMODE,@CREFMEMOID,@CFINYEAR,'MEMO_NO','MEMO_DT','MEMO_ID',@CWHERE,1  
+  GOTO LAST  
+LBLCMM01106:
+	SELECT a.*,b.username ,c.scheme_name  
+	FROM GV_GEN_MST A (NOLOCK)
+	JOIN USERS B (NOLOCK) ON B.USER_CODE=A.USER_CODE
+	left outer join scheme_setup_det c (nolock) on A.scheme_id = c.row_id 
+	WHERE MEMO_ID=@CWHERE
+    GOTO LAST  
+LBLCMD01106:  
+	--SELECT A.*,B.*,c.dept_id+'-'+C.DEPT_NAME AS DEPT_NAME
+	--FROM GV_GEN_DET A (NOLOCK)
+	--LEFT OUTER JOIN GV_MST_REDEMPTION B (NOLOCK) ON B.GV_SRNO=A.GV_SRNO
+	--LEFT OUTER JOIN LOCATION C (NOLOCK) ON C.DEPT_ID=B.REDEEMED_AT_DEPT_ID
+	--WHERE A.MEMO_ID=@CWHERE     
+	--ORDER BY  A.GV_SRNO
+	SELECT A.*,B.gv_srno,c.Dept_id AS redeemed_at_dept_id,D.CM_DT AS redeemed_on,B.memo_id AS redemption_cm_id,B.AMOUNT AS gv_amount,B.gv_scratch_no,D.cm_no,c.dept_id+'-'+C.DEPT_NAME AS DEPT_NAME
+	FROM GV_GEN_DET A (NOLOCK)
+	LEFT OUTER JOIN paymode_xn_det B (NOLOCK) ON B.GV_SRNO=A.GV_SRNO AND B.xn_type='SLS'
+	LEFT OUTER JOIN CMM01106 D (NOLOCK) ON D.cm_id=B.memo_ID
+	LEFT OUTER JOIN LOCATION C (NOLOCK) ON C.DEPT_ID=d.CUSTOMER_CODE 
+	WHERE A.MEMO_ID=@CWHERE     
+	ORDER BY  A.GV_SRNO
+	GOTO LAST  
+LBLSCHEMESLOV:
+	SELECT scheme_name,scheme_set_name,row_id as scheme_id 
+	FROM scheme_Setup_det a JOIN scheme_Setup_mst b 
+	ON a.memo_no=b.memo_no
+	ORDER BY scheme_name
+	GOTO LAST  
+LBLLOV:
+	IF (SELECT VALUE FROM CONFIG WHERE config_option='HO_LOCATION_ID')=(SELECT VALUE FROM CONFIG WHERE config_option='LOCATION_ID')
+	BEGIN
+		SELECT ISNULL(GV_COLLECTION_NAME,'')+'('+MEMO_NO+')' AS MEMO_NO,MEMO_ID   
+		FROM GV_GEN_MST (NOLOCK)  
+		ORDER BY memo_dt,memo_no  
+	END
+	ELSE
+	BEGIN
+		SELECT   ISNULL(A.GV_COLLECTION_NAME,'')+'('+A.MEMO_NO+')' AS MEMO_NO,A.MEMO_ID   
+		FROM GV_GEN_MST A(NOLOCK)  
+		JOIN 
+		(SELECT B.MEMO_ID FROM gv_gen_det B (NOLOCK)
+		JOIN gv_stkxfer_det C (NOLOCK) ON C.gv_srno=B.gv_srno
+		JOIN gv_stkxfer_mst D (NOLOCK) ON D.memo_id=C.memo_id
+		WHERE ISNULL(D.receipt_dt,'')<>''
+		GROUP BY  B.MEMO_ID
+		)X  ON A.memo_id=X.memo_id
+		ORDER BY a.memo_dt,a.memo_no  
+	 END
+	GOTO LAST  
+LAST:
+
+END
+
+

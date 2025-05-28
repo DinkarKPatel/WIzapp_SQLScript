@@ -1,0 +1,217 @@
+CREATE PROCEDURE SP_VALIDATE_MEMODATE_OPt--(LocId 3 digit change by Sanjay:30-10-2024)
+@CXNTYPE VARCHAR(10),
+@CXNID VARCHAR(40)='',
+@nSpId VARCHAR(40)='',
+@CERRORMSG VARCHAR(MAX) OUTPUT
+--WITH ENCRYPTION
+AS
+BEGIN
+	DECLARE @CMASTERTABLENAME VARCHAR(200),@CMAXMEMONO VARCHAR(50),@DMAXMEMODATE DATETIME,@DMINMEMODATE DATETIME,@CCURMEMONO VARCHAR(50)
+				   ,@CCMD NVARCHAR(MAX),@CKEYFIELDCOL VARCHAR(100),@CKEYFIELDCOL2 VARCHAR(100),@CKEYDATECOL VARCHAR(50)
+				   ,@DMEMODT DATETIME,@NMEMOPREFIXLEN INT,@CMINCMNO VARCHAR(15),@cMemonoCol VARCHAR(20)
+				   ,@CFINYEAR VARCHAR(10),@nCurMemoNO NUMERIC(5,0),@nNextMemoNo NUMERIC(5,0),@CNEXTMEMONO VARCHAR(50)
+				   ,@NMINCMNO INT,@CWHERECLAUSE VARCHAR(MAX),@CMEMOPREFIX VARCHAR(10),@cMemoDtCol VARCHAR(20)
+				   ,@CDONOTENFORCEDAYCLOSE VARCHAR(4),@DMAXMEMODT DATETIME
+				   ,@cMemoIdCol VARCHAR(20),@cStep VARCHAR(20),@nRightChars NUMERIC(4,0)
+
+BEGIN TRY	
+	
+	IF @nSpId=''
+		SET @nSpId=@cXnId
+
+	SET @cStep='680.10'				 
+	EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@nSpId,1
+
+	SET @CERRORMSG=''
+	
+	SET @cStep='680.20'	
+	EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@nSpId,1
+
+	SET @CMASTERTABLENAME=(CASE WHEN @cXntype='SLS' THEN 'cmm01106' WHEN @cXntype='WSL' THEN 'inm01106'
+	 WHEN @cXntype='WSR' THEN 'cnm01106'  WHEN @cXntype='PRT' THEN 'rmm01106' ELSE '' END)
+	
+	SET @cStep='680.30'
+		EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@nSpId,1
+	SET @cMemoDtCol=(CASE WHEN @cXntype='SLS' THEN 'cm_dt' WHEN @cXntype='WSL' THEN 'inv_dt'
+	 WHEN @cXntype='WSR' THEN 'cn_dt'  WHEN @cXntype='PRT' THEN 'rm_dt' ELSE '' END)
+	
+	SET @cStep='680.40'
+	SET @cMemoNoCol=(CASE WHEN @cXntype='SLS' THEN 'cm_no' WHEN @cXntype='WSL' THEN 'inv_no'
+	 WHEN @cXntype='WSR' THEN 'cn_no'  WHEN @cXntype='PRT' THEN 'rm_no' ELSE '' END)
+	
+	SET @cStep='680.50'
+	SET @cMemoIdCol=(CASE WHEN @cXntype='SLS' THEN 'cm_id' WHEN @cXntype='WSL' THEN 'inv_id'
+	 WHEN @cXntype='WSR' THEN 'cn_id'  WHEN @cXntype='PRT' THEN 'rm_id' ELSE '' END)
+
+
+
+	SET @cStep='680.60'
+	EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@nSpId,1
+
+	SET @cCmd=N'SELECT @DMEMODT='+@cMemoDtCol+',@CCURMEMONO=ltrim(rtrim('+@cMemonoCol+')) FROM '+@CMASTERTABLENAME+' (NOLOCK) 
+				WHERE '+@cMemoIdCol+'='''+@cXnId+''''
+	PRINT @cCmd	
+	EXEC SP_EXECUTESQL @cCmd,N'@DMEMODT DATETIME OUTPUT,@CCURMEMONO VARCHAR(50) OUTPUT',
+	@DMEMODT OUTPUT,@CCURMEMONO OUTPUT
+
+	SET @cStep='680.70'
+	EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@nSpId,1
+	SELECT @CFINYEAR='01'+DBO.FN_GETFINYEAR(@DMemoDt)
+
+	DECLARE @cMemoNoval VARCHAR(10),@nHyphenCnt INT
+
+	SET @cCmd=N'SELECT @nHyphenCnt=dbo.fn3s_getcharcount(''-'','+@cMemonoCol+')
+			FROM  '+@CMASTERTABLENAME+' (NOLOCK) 
+			WHERE '+@cMemoIdCol+'='''+@cXnId+''''
+	PRINT @cCmd
+	EXEC SP_EXECUTESQL @cCmd,N'@nHyphenCnt NUMERIC(2,0) OUTPUT',@nHyphenCnt OUTPUT
+
+	SET @cCmd=N'SELECT @NMEMOPREFIXLEN=dbo.CHARINDEX_nth(''-'','+@cMemonoCol+',1,'+STR(@nHyphenCnt)+')
+			FROM  '+@CMASTERTABLENAME+' (NOLOCK) 
+			WHERE '+@cMemoIdCol+'='''+@cXnId+''''
+	PRINT @cCmd
+	EXEC SP_EXECUTESQL @cCmd,N'@NMEMOPREFIXLEN NUMERIC(2,0) OUTPUT',@NMEMOPREFIXLEN OUTPUT
+
+	SET @cStep='680.73'
+		EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@nSpId,1
+	SET @cCmd=N'SELECT TOP 1 @cMAXMEMONO='+@cMemoNoCol+' FROM '+@CMASTERTABLENAME+' (NOLOCK) 
+				WHERE  LEFT('+@cMemoNocol+','+str(@NMEMOPREFIXLEN)+')=LEFT('''+@CCURMEMONO+''','+CONVERT(VARCHAR,@NMEMOPREFIXLEN)+')
+	AND ISNUMERIC(right( rtrim(ltrim('+@cMemoNocol+')), CHARINDEX(''-'', rtrim(ltrim(REVERSE('+@cMemoNocol+'))))-1))=1
+	AND cast(right( rtrim(ltrim('+@cMemoNocol+')), CHARINDEX(''-'', rtrim(ltrim(REVERSE('+@cMemoNocol+'))))-1) as numeric(10,0))
+	<cast(right( rtrim(ltrim('''+@CCURMEMONO+''')) ,CHARINDEX(''-'', rtrim(ltrim(REVERSE('''+@CCURMEMONO+'''))))-1) as numeric(10,0))
+	AND CANCELLED=0	AND FIN_YEAR='''+@CFINYEAR+''' 
+	ORDER BY '+@cMemoDtCol+' DESC '
+	PRINT @cCmd
+	EXEC SP_EXECUTESQL @cCmd,N'@cMAXMEMONO VARCHAR(50) OUTPUT',@cMAXMEMONO OUTPUT
+	
+	SET @cStep='680.76'	
+		EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@nSpId,1
+	
+	IF ISNULL(@cMAXMEMONO,'')<>''
+	BEGIN
+		SET @CMAXMEMONO=LTRIM(RTRIM(@CMAXMEMONO))
+		SET @CCMD=N'SELECT @DMAXMEMODATE='+@cMemoDtCOL+' FROM '+@CMASTERTABLENAME+' 
+		WHERE '+@cMemonoCol+'='''+@CMAXMEMONO+''' AND FIN_YEAR='''+@CFINYEAR+''' AND cancelled=0'
+		PRINT @CCMD
+		EXEC SP_EXECUTESQL @CCMD,N'@DMAXMEMODATE DATETIME OUTPUT',@DMAXMEMODATE OUTPUT
+			
+		IF @DMEMODT<@DMAXMEMODATE
+		BEGIN
+			SET @CERRORMSG='CURRENT MEMO DATE CANNOT BE LESS THAN - '+CONVERT(VARCHAR,@DMAXMEMODATE,105)
+			GOTO END_PROC
+		END	
+	END
+
+
+	SET @cStep='680.82'
+	EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@nSpId,1
+
+	--GET THE MIN MEMO_NO ABOVE THE PASSED MEMO_ID
+	SET @CCMD=N'SELECT TOP 1 @cNextMemoNo=LTRIM(RTRIM('+@cMemonoCol+'))
+				FROM '+@CMASTERTABLENAME+' (NOLOCK) WHERE FIN_YEAR='''+@CFINYEAR+'''
+				AND cancelled=0 AND LEFT('+@cMemonoCol+','+CONVERT(VARCHAR(4),@NMEMOPREFIXLEN)+
+				')=LEFT('''+@CCURMEMONO+''','+CONVERT(VARCHAR,@NMEMOPREFIXLEN)+') 
+				AND dbo.fn3s_getcharcount(''-'','+@cMemonoCol+')='+str(@nHyphenCnt)+'
+				AND ISNUMERIC(right( rtrim(ltrim('+@cMemoNocol+')), CHARINDEX(''-'', rtrim(ltrim(REVERSE('+@cMemoNocol+'))))-1))=1
+				AND cast(right( rtrim(ltrim('+@cMemoNocol+')), CHARINDEX(''-'', rtrim(ltrim(REVERSE('+@cMemoNocol+'))))-1) as numeric(10,0))
+				>cast(right( rtrim( ltrim('''+@CCURMEMONO+''')) ,CHARINDEX(''-'', rtrim(ltrim(REVERSE('''+@CCURMEMONO+'''))))-1) as numeric(10,0))'
+
+	PRINT @CCMD	
+	EXEC SP_EXECUTESQL @CCMD,N'@cNextMemoNo VARCHAR(50) OUTPUT',@cNextMemoNo OUTPUT
+		
+	IF ISNULL(@cNextMemoNo,'')<>''
+	BEGIN
+		SET @cStep='680.85'
+		EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@nSpId,1
+
+		--select 'Next memo found :',@cNextMemoNo
+
+		SET @nNextMemoNo=cast(right( rtrim( ltrim(@CCURMEMONO)) ,CHARINDEX('-', rtrim(ltrim(REVERSE(@CCURMEMONO))))-1) 
+							as numeric(10,0))+1
+		--select 'Next memo expected',@nNextMemoNo
+		SET @nCurMemoNO=cast(right( rtrim( ltrim(@CCURMEMONO)) ,CHARINDEX('-', rtrim(ltrim(REVERSE(@CCURMEMONO))))-1) 
+							as numeric(10,0))
+		IF (@nNextMemoNo-@nCurMemoNO)>1
+		BEGIN
+			print 'Fetch next no. '
+			SET @cStep='680.87'
+			EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@nSpId,1
+			SET @nRightChars=LEN(SUBSTRING(@CCURMEMONO,CHARINDEX('-', rtrim(ltrim(REVERSE(@CCURMEMONO))))+1,
+							 len(@CCURMEMONO)))
+			SET @cNextMemoNo=LEFT(@CCURMEMONO,CHARINDEX('-', rtrim(ltrim(REVERSE(@CCURMEMONO)))))+
+							 REPLICATE('0',@nRightChars-LEN(@nCurMemoNO+1))+ltrim(rtrim(str(@nCurMemoNO+1)))
+
+		--	select 'Next memo Final:',@cNextMemoNo
+		END	 
+
+		SET @cStep='680.88.5'
+		EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@nSpId,1
+		SET @CCMD=N'SELECT @DMINMEMODATE='+@cMemoDtCol+' FROM '+@CMASTERTABLENAME+' 
+		WHERE '+@cMemonoCol+'='''+@cNextMemoNo+''' AND FIN_YEAR='''+@CFINYEAR+''''
+		PRINT @CCMD
+		EXEC SP_EXECUTESQL @CCMD,N'@DMINMEMODATE DATETIME OUTPUT',@DMINMEMODATE OUTPUT
+			
+		IF @DMEMODT>@DMINMEMODATE
+		BEGIN
+			SET @CERRORMSG='CURRENT MEMO DATE CANNOT BE GREATER THAN - '+CONVERT(VARCHAR,@DMINMEMODATE,105)+'('+@cNextMemoNo+':'+@cCurMemoNo+')'
+			GOTO END_PROC
+		END	
+	END	
+
+	SET @cStep='680.90'
+		EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@nSpId,1
+	print 'sp3s_GETMAXNO_DATE ste#1'
+	DECLARE @DPREVMEMODT DATETIME
+	
+	print 'sp3s_GETMAXNO_DATE ste#2'
+	SET @cCmd=N'SELECT @CMAXMEMONO=MAX('+@cMemonoCol+') FROM '+@CMASTERTABLENAME+' (NOLOCK) 
+	WHERE '+@cMemoDtCol+'='''+convert(varchar,@DMEMODT,110)+''' AND LEFT('+@cMemonoCol+','+str(@NMEMOPREFIXLEN)+
+	')='''+@CMEMOPREFIX+''' AND CANCELLED=0	AND '+@cMemoIdCol+'<>'''+@CXNID+''''
+	PRINT @cCmd
+	EXEC SP_EXECUTESQL @cCmd,N'@CMAXMEMONO VARCHAR(50) OUTPUT',@CMAXMEMONO OUTPUT
+
+	IF ISNULL(@CMAXMEMONO,'')=''
+	BEGIN
+		SET @cStep='680.110'
+			EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@nSpId,1
+		print 'sp3s_GETMAXNO_DATE ste#3'
+		SET @cCmd=N'SELECT TOP 1 @DPREVMEMODT='+@cMemoDtCol+' FROM '+@CMASTERTABLENAME+' (NOLOCK) 
+		WHERE LEFT('+@cMemonoCol+','+str(@NMEMOPREFIXLEN)+')='''+@CMEMOPREFIX+'''
+		AND '+@cMemoDtCol+'<'''+convert(varchar,@DMEMODT,110)+''' AND CANCELLED=0 AND FIN_YEAR='''+@CFINYEAR+'''
+		ORDER BY '+@cMemoDtCol+' DESC'
+		PRINT @cCmd
+		EXEC SP_EXECUTESQL @cCmd,N'@DPREVMEMODT DATETIME OUTPUT',@DPREVMEMODT OUTPUT
+		
+		SET @cStep='680.115'	
+			EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@nSpId,1
+		print 'sp3s_GETMAXNO_DATE ste#4 in validate_memodate'
+		SET @cCmd=N'SELECT @CMAXMEMONO=MAX('+@cMemonoCol+') FROM '+@CMASTERTABLENAME+' (NOLOCK) 
+		WHERE '+@cMemoDtCol+'='''+CONVERT(VARCHAR,@DPREVMEMODT,110)+''' AND LEFT('+@cMemonoCol+','+
+		STR(@NMEMOPREFIXLEN)+')='''+@CMEMOPREFIX+''' AND CANCELLED=0'
+
+		PRINT @cCmd
+		EXEC SP_EXECUTESQL @cCmd,N'@CMAXMEMONO VARCHAR(50) OUTPUT',@CMAXMEMONO OUTPUT
+
+		SET @CMAXMEMONO=LTRIM(RTRIM(@CMAXMEMONO))
+	END	
+
+	SET @cStep='680.120'
+		EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@nSpId,1
+	IF @CCURMEMONO<@CMAXMEMONO AND LEN(LTRIM(RTRIM(@CCURMEMONO)))=LEN(LTRIM(RTRIM(@CMAXMEMONO)))
+		SET @CERRORMSG='CURRENT MEMO NO. :'+@CCURMEMONO+' CANNOT BE LESS THAN :'+@CMAXMEMONO
+
+		GOTO END_PROC
+END TRY
+
+BEGIN CATCH
+	
+	SET @CERRORMSG='Error in Procedure SP_VALIDATE_MEMODATE_OPT at Step#'+@cStep+' '+ERROR_MESSAGE()
+
+	print 'Catch of SP_VALIDATE_MEMODATE_OPT:'+@CERRORMSG
+	GOTO END_PROC
+END CATCH
+END_PROC:
+
+END
+-----END OF PROCEDURE SP_VALIDATE_MEMODATE_OPT
+

@@ -1,0 +1,51 @@
+CREATE PROCEDURE SPPPC_SUPPLIER_CREDITORS_NEW ---1,''      
+(        
+@NQUERYID NUMERIC(2,0),          
+@VNAME VARCHAR(500)        
+)        
+AS            
+BEGIN         
+        
+ DECLARE @CSTEP INT, @CCMD NVARCHAR(MAX), @ERRMSG_OUT VARCHAR(MAX),@cHEAD_CODE VARCHAR(MAX)       
+ BEGIN TRY        
+  SET NOCOUNT ON;        
+          
+  SET @ERRMSG_OUT = ''        
+          
+  IF @NQUERYID = 1       
+   GOTO LBLGETCUSTOMERLIST        
+    
+           
+  ELSE        
+   GOTO LAST        
+            
+LBLGETCUSTOMERLIST:        
+  SET @CSTEP      = 101
+  SET @cHEAD_CODE =  DBO.FN_ACT_TRAVTREE ('0000000021') ----ADD VARIABLE BY GAURI ON 17/4/2019
+          
+    SELECT   A.AC_CODE, A.HEAD_CODE, A.AC_NAME, ISNULL(A.CREDIT_DAYS, 0) AS CREDIT_DAYS, ISNULL(A.DISCOUNT_PERCENTAGE, 0) AS DISCOUNT_PERCENTAGE,         
+      A.CITY, A.ADDRESS0 + ' ' + A.ADDRESS1 + ' ' + A.ADDRESS2 + ' ' + A.AREA_NAME + ' ' + A.CITY + ' ' + A.STATE + ' ' + A.MOBILE + ' ' AS SUPP_ADDRESS,         
+      A.AC_NAME AS REPCOLNAME, A.DEFAULT_RATE_TYPE, A.DISCOUNT_PERCENTAGE            
+  FROM LMV01106 A (NOLOCK)                   
+  WHERE ( CHARINDEX ( HEAD_CODE,@cHEAD_CODE)>0     ----REPLACE VARIABLE FROM FUNCTION BY GAURI ON 17/4/2019    
+ -- OR CHARINDEX ( HEAD_CODE, DBO.FN_ACT_TRAVTREE ('0000000001'))>0 --CHANGES THROUGH SURENDRA        
+  OR ALLOW_CREDITOR_DEBTOR = 1 )                   
+  AND INACTIVE = 0 AND A.AC_CODE <> '0000000000' AND ISNULL(A.AC_NAME,'')<>''        
+  AND A.AC_NAME LIKE '%'+ @VNAME +'%'        
+  GOTO LAST        
+          
+  
+LAST:           
+ GOTO END_PROC        
+        
+  SET NOCOUNT OFF;        
+ END TRY          
+ BEGIN CATCH          
+  SET @ERRMSG_OUT='ERROR: [P]: SPPPC_BUYERSORDER_WSL, [STEP]: '+CAST(@CSTEP AS VARCHAR(5))+', [MESSAGE]: ' + ERROR_MESSAGE()        
+  GOTO END_PROC          
+ END CATCH           
+        
+END_PROC:          
+ IF  ISNULL(@ERRMSG_OUT,'')<>''         
+  SELECT @ERRMSG_OUT AS ERRORMSG        
+END

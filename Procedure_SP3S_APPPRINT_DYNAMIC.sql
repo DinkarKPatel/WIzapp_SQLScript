@@ -1,0 +1,255 @@
+CREATE PROCEDURE SP3S_APPPRINT_DYNAMIC --(LocId 3 digit change by Sanjay:04-11-2024)
+(
+@cMemoId VARCHAR(40),
+@CWHERE NVARCHAR(50)=''
+)
+AS
+BEGIN
+	SET NOCOUNT ON
+	   DECLARE @cCmdCols NVARCHAR(MAX),@cCmd NVARCHAR(MAX),@cCols NVARCHAR(MAX),@cCmd1 NVARCHAR(MAX),@cCmd2 NVARCHAR(MAX),@cCmd3 NVARCHAR(MAX),@cCmdIMG NVARCHAR(MAX)
+	   ,@PARA1 NVARCHAR(10),@PARA2 NVARCHAR(10),@PARA3 NVARCHAR(10),@PARA4 NVARCHAR(10),@PARA5 NVARCHAR(10),@PARA6 NVARCHAR(10),
+	    @SALE_PERSON VARCHAR(1000)    
+	   
+
+        
+		    SET @SALE_PERSON=''    
+	
+			SELECT @SALE_PERSON=COALESCE(@SALE_PERSON,'')+E.EMP_NAME+','        
+			FROM      
+			(      
+			SELECT C1.SNO,E.EMP_NAME      
+			FROM        
+			(           
+			SELECT DISTINCT '1'SNO,C.EMP_CODE  FROM APD01106 C (NOLOCK) WHERE C.MEMO_ID=@cMemoId      
+			UNION        
+			SELECT DISTINCT '2',C.EMP_CODE1 FROM APD01106 C (NOLOCK) WHERE C.MEMO_ID=@cMemoId      
+			UNION        
+			SELECT DISTINCT '3',C.EMP_CODE2 FROM APD01106 C (NOLOCK) WHERE C.MEMO_ID=@cMemoId      
+			)C1        
+			JOIN EMPLOYEE E (NOLOCK) ON E.EMP_CODE=C1.EMP_CODE       
+			WHERE ISNULL(E.EMP_NAME,'')<>''      
+			)E      
+			ORDER BY E.SNO      
+        
+			SELECT @SALE_PERSON=LTRIM(RTRIM(@SALE_PERSON))              
+			IF RIGHT(@SALE_PERSON,1)=','              
+			   SET @SALE_PERSON=LEFT(@SALE_PERSON,LEN(@SALE_PERSON)-1)              
+			IF @SALE_PERSON<>''               
+			   SET @SALE_PERSON='You are attended by '+@SALE_PERSON  
+		 
+		
+
+		DECLARE @IMG_SECTION BIT,@IMG_SUB_SECTION BIT,@IMG_ARTICLE BIT,@IMG_PARA1 BIT,@IMG_PARA2 BIT,@IMG_PARA3 BIT,@IMG_PARA4 BIT,@IMG_PARA5 BIT,@IMG_PARA6 BIT,@IMG_PRODUCT BIT
+		SELECT @IMG_SECTION=SECTION,@IMG_SUB_SECTION=SUB_SECTION,@IMG_ARTICLE=ARTICLE        
+		,@IMG_PARA1=PARA1 ,@IMG_PARA2=PARA2, @IMG_PARA3=PARA3,@IMG_PARA4=PARA4        
+		,@IMG_PARA5=PARA5 ,@IMG_PARA6=PARA6, @IMG_PRODUCT=PRODUCT        
+		FROM DBO.IMAGE_INFO_CONFIG WITH(NOLOCK)  
+		--END: 30 NOV 2019
+		
+		
+	  
+        
+        SELECT TOP 1 @PARA1=VALUE FROM CONFIG WHERE config_option='PARA1_caption' AND ISNULL(VALUE,'') <>''
+        SELECT TOP 1 @PARA2=VALUE FROM CONFIG WHERE config_option='PARA2_caption' AND ISNULL(VALUE,'') <>''
+        SELECT TOP 1 @PARA3=VALUE FROM CONFIG WHERE config_option='PARA3_caption' AND ISNULL(VALUE,'') <>''
+        SELECT TOP 1 @PARA4=VALUE FROM CONFIG WHERE config_option='PARA4_caption' AND ISNULL(VALUE,'') <>''
+        SELECT TOP 1 @PARA5=VALUE FROM CONFIG WHERE config_option='PARA5_caption' AND ISNULL(VALUE,'') <>''
+        SELECT TOP 1 @PARA6=VALUE FROM CONFIG WHERE config_option='PARA6_caption' AND ISNULL(VALUE,'') <>''
+	    SET @PARA1=CASE WHEN ISNULL(@PARA1,'')='' THEN 'Para1' ELSE ISNULL(@PARA1,'') END
+	    SET @PARA2=CASE WHEN ISNULL(@PARA2,'')='' THEN 'Para2' ELSE ISNULL(@PARA2,'') END
+	    SET @PARA3=CASE WHEN ISNULL(@PARA3,'')='' THEN 'Para3' ELSE ISNULL(@PARA3,'') END
+	    SET @PARA4=CASE WHEN ISNULL(@PARA4,'')='' THEN 'Para4' ELSE ISNULL(@PARA4,'') END
+	    SET @PARA5=CASE WHEN ISNULL(@PARA5,'')='' THEN 'Para5' ELSE ISNULL(@PARA5,'') END
+	    SET @PARA6=CASE WHEN ISNULL(@PARA6,'')='' THEN 'Para6' ELSE ISNULL(@PARA6,'') END
+	   
+	    SELECT @cCols=COALESCE(@cCols+',','')+column_name+' ['+DISPLAY_COLUMN_NAME+']' 
+	    FROM dynamic_print_cols	
+	    WHERE LTRIM(RTRIM(xn_type))='APP' AND selected=1
+		and DISPLAY_COLUMN_NAME <>'HSN_Summary'
+
+	select Row_id =cast('' as varchar(100)),APP_product_code=cast('' as varchar(50)),quantity =cast(0 as numeric(10,3)),
+	       hsn_code =cast('' as varchar(20)),xn_value_without_gst=cast(0 as numeric(14,2)),Gst_percentage=cast(0 as numeric(6,2)),
+	       Igst_amount =cast(0 as numeric(10,2)),Cgst_amount =cast(0 as numeric(10,2)),Sgst_amount =cast(0 as numeric(10,2)),
+		   xn_value_with_gst=cast(0 as numeric(14,2))
+	  INTO #TMPAPPHSN
+	where 1=2
+		
+	    
+		if exists (select  top 1 'u'  FROM dynamic_print_cols	WHERE LTRIM(RTRIM(xn_type))='APP' AND selected=1 and DISPLAY_COLUMN_NAME='HSN_Summary')
+		begin
+		      DECLARE @DMEMO_DT DATETIME ,@CCURSTATE_CODE varchar(4),@CPARTYSTATE_CODE varchar(4)
+
+
+
+			  SELECT @DMEMO_DT=MEMO_DT ,
+			         @CCURSTATE_CODE=(CASE WHEN  ISNULL(L.LOC_GST_NO ,'')='' THEN  L.GST_STATE_CODE ELSE LEFT(L.LOC_GST_NO ,2) END)  ,
+			         @CPARTYSTATE_CODE=(CASE WHEN  ISNULL(cust.cus_gst_no  ,'')='' THEN  cust.cus_gst_state_code ELSE LEFT(cust.cus_gst_no ,2) END)
+			  FROM APM01106 A (nolock)
+			  join location l (nolock) on a.location_Code=l.dept_id 
+			  join custdym cust (nolock) on a.CUSTOMER_CODE =cust.customer_code 
+			  WHERE MEMO_ID=@CMEMOID
+
+
+
+			  INSERT INTO #TMPAPPHSN(ROW_ID,APP_product_code,quantity,XN_VALUE_WITHOUT_GST)
+			  SELECT A.ROW_ID ,a.product_code,a.quantity ,(A.MRP*a.QUANTITY  ) as XN_VALUE_WITHOUT_GST
+			  FROM APD01106 A (NOLOCK)
+			  where a.memo_id =@cMemoId
+
+			   UPDATE TMP SET HSN_CODE=CASE WHEN ISNULL(SKU.HSN_CODE,'') NOT IN ('','0000000000') THEN SKU.HSN_CODE  
+				                                ELSE art.HSN_CODE END 
+				               
+			   FROM #TMPAPPHSN TMP WITH (ROWLOCK)
+			   JOIN SKU  (NOLOCK) ON TMP.APP_product_code=SKU.PRODUCT_CODE 
+			   JOIN ARTICLE ART (NOLOCK) ON ART.ARTICLE_CODE =SKU.ARTICLE_CODE 
+
+
+			   Delete from gst_xns_hsn where sp_id=@cMemoId
+				
+			   ;WITH CTE AS
+				(
+				 SELECT A.ROW_ID,B.HSN_CODE,ISNULL(C.TAX_PERCENTAGE,0) AS TAX_PERCENTAGE,ISNULL(C.RATE_CUTOFF,0) AS RATE_CUTOFF,
+						ISNULL(C.RATE_CUTOFF_TAX_PERCENTAGE,0) AS RATE_CUTOFF_TAX_PERCENTAGE,
+						ISNULL(C.WEF,'') AS WEF,ISNULL(B.TAXABLE_ITEM,'') AS TAXABLE_ITEM,ISNULL(B.HSN_TYPE ,'') AS HSN_TYPE  ,
+						SR=ROW_NUMBER() OVER (PARTITION BY A.ROW_ID ORDER BY C.WEF DESC),
+						ISNULL(C.GST_CAL_BASIS,1) AS GST_CAL_BASIS,
+						isnull(c.Rate_CutOff_Gst_Cess_Percentage,0) as Rate_CutOff_Gst_Cess_Percentage,
+					    isnull(c.Gst_Cess_Percentage,0) as Gst_Cess_Percentage
+				FROM #TMPAPPHSN A (NOLOCK)
+			    JOIN HSN_MST B (NOLOCK) ON A.HSN_CODE =B.HSN_CODE 
+			    LEFT JOIN HSN_DET C (NOLOCK) ON B.HSN_CODE =C.HSN_CODE AND C.WEF  <=@DMEMO_DT AND ISNULL(C.DEPT_ID,'')=''
+				 
+				)
+				insert gst_xns_hsn (SP_ID,ROW_ID,HSN_CODE,TAX_PERCENTAGE,RATE_CUTOFF,
+				RATE_CUTOFF_TAX_PERCENTAGE,WEF,TAXABLE_ITEM,HSN_TYPE,SR,GST_CAL_BASIS,Rate_CutOff_Gst_Cess_Percentage,Gst_Cess_Percentage)
+				SELECT @cMemoId SP_ID,ROW_ID,HSN_CODE,TAX_PERCENTAGE,RATE_CUTOFF,
+				RATE_CUTOFF_TAX_PERCENTAGE,WEF,TAXABLE_ITEM,HSN_TYPE,SR,GST_CAL_BASIS,
+			    Rate_CutOff_Gst_Cess_Percentage,Gst_Cess_Percentage
+				FROM CTE WHERE SR=1
+
+				 UPDATE TMP SET GST_PERCENTAGE= ISNULL(CASE WHEN HM.RATE_CUTOFF<ABS(TMP.xn_value_without_gst)/ABS(TMP.QUANTITY) 
+                 THEN HM.TAX_PERCENTAGE ELSE RATE_CUTOFF_TAX_PERCENTAGE END ,0)
+				 FROM #TMPAPPHSN TMP (NOLOCK)
+				 JOIN gst_xns_hsn HM (NOLOCK) ON  HM.HSN_CODE=TMP.HSN_CODE  and tmp.row_id =hm.row_id 
+				 where hm.sp_id=@cMemoId
+
+
+		     UPDATE TMP 
+			 SET  IGST_AMOUNT =round((CASE WHEN @CCURSTATE_CODE<>@CPARTYSTATE_CODE THEN (xn_value_without_gst*TMP.GST_PERCENTAGE/100) else 0 end),2) ,
+			      CGST_AMOUNT=round((CASE WHEN @CCURSTATE_CODE=@CPARTYSTATE_CODE THEN  (xn_value_without_gst*TMP.GST_PERCENTAGE/100) else 0 end)/2,2) ,
+			      SGST_AMOUNT=round((CASE WHEN @CCURSTATE_CODE=@CPARTYSTATE_CODE THEN  (xn_value_without_gst*TMP.GST_PERCENTAGE/100) else 0 end)/2,2) 
+			FROM #TMPAPPHSN TMP (NOLOCK)
+
+			update  #TMPAPPHSN set xn_value_with_gst =XN_VALUE_WITHOUT_GST+isnull(Igst_amount,0) +isnull(Cgst_amount,0) +isnull(Sgst_amount ,0)
+
+
+			set @cCols=@cCols+' ,hsn.Hsn_Code,hsn.Gst_percentage,hsn.xn_value_without_Gst,hsn.IGST_AMOUNT,hsn.CGST_AMOUNT,hsn.SGST_AMOUNT,hsn.xn_value_with_gst'
+			
+
+
+		end
+	
+       
+
+	   DECLARE @CSPID VARCHAR(50),@CTABLENAME VARCHAR(50)
+
+		SET @CSPID=LTRIM(RTRIM(STR(@@SPID )))
+		SET @CTABLENAME  ='##TMPINVPRINT'+@CSPID
+
+		SET @CCMD = N'IF OBJECT_ID(''TEMPDB..'+@CTABLENAME+''',''U'') IS NOT NULL
+			DROP TABLE '+@CTABLENAME+''
+		PRINT @CCMD
+		EXEC SP_EXECUTESQL @CCMD
+   
+
+	   SET @cCmdCols=N'
+	   SELECT '+@cCols+',
+	   '''+@para1 +''' AS PARA1_CONFIG,'''+@PARA2 +''' AS PARA2_CONFIG,'''+@PARA3 +''' AS PARA3_CONFIG,
+	   '''+@PARA4 +''' AS PARA4_CONFIG,'''+@PARA5 +''' AS PARA5_CONFIG,'''+@PARA6 +''' AS PARA6_CONFIG,
+	   DBO.FN_CONVERTAMOUNTINWORDS(ABS(APM.NET_AMOUNT)) AS  NET_AMOUNT_IN_WORDS,
+	   '''+@SALE_PERSON+''' AS  SALE_PERSON,SLS_CONFIG.PRINT_GATE_PASS
+	   '
+	   +' INTO '+@CTABLENAME+' '
+	   SET @cCmd1=N'  FROM APD01106  (NOLOCK)  
+	   JOIN APM01106 APM (NOLOCK) ON APM.MEMO_ID=APD01106.MEMO_ID       
+	   JOIN USERS  (NOLOCK) ON USERS.USER_CODE=APM.USER_CODE   
+	   LEFT JOIN COMPANY CMP (NOLOCK) ON CMP.COMPANY_CODE=''01''   
+	   LEFT OUTER JOIN LOCATION SL (NOLOCK) ON SL.DEPT_ID =APM.LOCATION_CODE
+	   LEFT JOIN AREA SLA (NOLOCK) ON SL.AREA_CODE=SLA.AREA_CODE                  
+	   LEFT JOIN CITY SLC (NOLOCK) ON SLA.CITY_CODE=SLC.CITY_CODE                  
+	   LEFT JOIN GST_STATE_MST APPGST (NOLOCK) ON APPGST.GST_STATE_CODE=SL.GST_STATE_CODE
+	   LEFT JOIN STATE SLST (nolock) on SL.gst_state_code =SLST.state_code
+	   LEFT JOIN REGIONM SLR (NOLOCK) ON SLST.region_code=SLR.region_code '
+       SET @cCmd2=N' 
+        JOIN SKU_NAMES (NOLOCK) ON SKU_NAMES.PRODUCT_CODE =APD01106.PRODUCT_CODE 
+		JOIN SKU (NOLOCK) ON SKU.PRODUCT_CODE =APD01106.PRODUCT_CODE '        
+       SET @cCmd3=N'  
+	   JOIN CUSTDYM CUST (NOLOCK) ON CUST.CUSTOMER_CODE=APM.CUSTOMER_CODE  
+	   LEFT JOIN AREA CUSTAR (NOLOCK) ON CUSTAR.AREA_CODE=CUST.AREA_CODE                  
+	   LEFT JOIN CITY CUSTCT (NOLOCK) ON CUSTCT.CITY_CODE=CUSTAR.CITY_CODE  
+	   LEFT JOIN GST_STATE_MST CUSTST (NOLOCK) ON CUSTST.GST_STATE_CODE=CUST.cus_gst_state_code
+	   LEFT JOIN EMPLOYEE ON EMPLOYEE.EMP_CODE=APD01106.EMP_CODE             
+       LEFT JOIN EMPLOYEE EMPLOYEE1 ON EMPLOYEE1.EMP_CODE=APD01106.EMP_CODE1             
+       LEFT JOIN EMPLOYEE EMPLOYEE2 ON EMPLOYEE2.EMP_CODE=APD01106.EMP_CODE2  
+	   LEFT JOIN 
+	   (SELECT TOP 1 XN_TYPE,ISNULL(PRINT_GATE_PASS,0)PRINT_GATE_PASS      
+             FROM GST_COMPANY_CONFIG         
+             WHERE XN_TYPE=''APP''        
+       )SLS_CONFIG ON SLS_CONFIG.XN_TYPE=''APP''  
+	   left join #TMPAPPHSN hsn on hsn.row_id=APD01106.row_id
+	   join bin (nolock) on bin.bin_id=APD01106.bin_id
+	   '
+
+       
+       IF CHARINDEX('PROD_IMAGE',@CCOLS)>0
+       SET @cCmdIMG=N'
+	                    LEFT OUTER JOIN ' + DB_NAME()+ '_IMAGE..IMAGE_INFO IMG (NOLOCK) ON 1=2 ' +
+                            (CASE WHEN @IMG_SECTION = 1 THEN 'AND IMG.SECTION_CODE=SECTIONM.SECTION_CODE' ELSE ''  END) +
+                            (CASE WHEN @IMG_SUB_SECTION = 1 THEN ' AND IMG.SUB_SECTION_CODE=SECTIOND.SUB_SECTION_CODE' ELSE '' END) +
+                            (CASE WHEN @IMG_ARTICLE = 1 THEN ' AND IMG.ARTICLE_CODE=sku.ARTICLE_CODE' ELSE '' END) +
+                            (CASE WHEN @IMG_PARA1 = 1 THEN ' AND IMG.PARA1_CODE=SKU.PARA1_CODE' ELSE '' END) +
+                            (CASE WHEN @IMG_PARA2 = 1 THEN ' AND IMG.PARA2_CODE=SKU.PARA2_CODE' ELSE '' END) +
+                            (CASE WHEN @IMG_PARA3 = 1 THEN ' AND IMG.PARA3_CODE=SKU.PARA3_CODE' ELSE '' END) +
+                            (CASE WHEN @IMG_PARA4 = 1 THEN  ' AND IMG.PARA4_CODE=SKU.PARA4_CODE' ELSE '' END) +
+                            (CASE WHEN @IMG_PARA5 = 1 THEN  ' AND IMG.PARA5_CODE=SKU.PARA5_CODE' ELSE '' END) +
+                            (CASE WHEN @IMG_PARA6 = 1 THEN  ' AND IMG.PARA6_CODE=SKU.PARA6_CODE' ELSE '' END) +
+                            (CASE WHEN @IMG_PRODUCT = 1 THEN  'AND IMG.PRODUCT_CODE=SKU.PRODUCT_CODE' ELSE '' END)
+                            +' WHERE APM.MEMO_ID='''+@cMemoId+''''       
+       ELSE
+          SET @cCmdIMG=N' WHERE APM.MEMO_ID='''+@cMemoId+''''
+     print 'cCmdCols '+@cCmdCols
+    
+       PRINT @ccmd1
+       PRINT @ccmd2
+       PRINT @ccmd3
+       PRINT 'IMG '+@cCmdIMG
+       EXEC(@cCmdCols+@ccmd1+@ccmd2+@ccmd3+@cCmdIMG)
+
+	   DECLARE  @CERRMSG VARCHAR(100)
+
+	  
+	   
+ END_PROC:
+
+	   IF ISNULL(@CERRMSG,'')<>'' 
+	   BEGIN
+		   SELECT @CERRMSG AS ERRMSG 
+	   END
+	   ELSE 
+	   BEGIN
+	        
+		SET @CCMD = N'SELECT * FROM '+@CTABLENAME+' '
+		PRINT @CCMD
+		EXEC SP_EXECUTESQL @CCMD
+
+	   END
+
+	    SET @CCMD = N'IF OBJECT_ID(''TEMPDB..'+@CTABLENAME+''',''U'') IS NOT NULL
+			DROP TABLE '+@CTABLENAME+''
+		PRINT @CCMD
+		EXEC SP_EXECUTESQL @CCMD
+
+SET NOCOUNT OFF
+END
+
+

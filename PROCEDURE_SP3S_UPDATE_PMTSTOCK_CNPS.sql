@@ -1,0 +1,68 @@
+create PROCEDURE SP3S_UPDATE_PMTSTOCK_CNPS
+@bREvertFlag BIT,
+@bAllowNegStock bit=0,
+@cErrormsg varchar(2000) output,
+@BNEGSTOCKFOUND BIT OUTPUT
+AS
+BEGIN
+	DECLARE @cStep VARCHAR(5)
+
+BEGIN TRY
+	
+	set @cStep='10'
+	set @CERRORMSG=''
+	
+	
+-- UPDATING STOCK OF PMT W.R.T. CURRENT MEMO
+	SET @cStep = 178		-- UPDATING PMT TABLE
+
+	INSERT PMT01106(last_update,rep_id,product_code,quantity_in_stock,DEPT_ID,BIN_ID) 
+	SELECT GETDATE(),'' AS REP_ID,A.PRODUCT_CODE,0 AS QUANTITY_IN_STOCK,A.DEPT_ID,A.BIN_ID
+	FROM #BARCODE_NETQTY A
+	LEFT JOIN PMT01106 B WITH (NOLOCK) ON A.product_code=B.product_code AND A.DEPT_ID=B.DEPT_ID AND A.BIN_ID=B.BIN_ID
+	WHERE B.product_code IS NULL 
+
+
+	UPDATE A
+	SET QUANTITY_IN_STOCK=QUANTITY_IN_STOCK+XN_QTY
+	FROM PMT01106 A WITH (ROWLOCK)
+	JOIN #BARCODE_NETQTY B ON A.product_code=B.product_code AND A.DEPT_ID=B.DEPT_ID AND A.BIN_ID=B.BIN_ID
+	
+
+
+	SET @cStep = 184
+
+
+	IF @bAllowNegStock=0
+	BEGIN
+		IF EXISTS(SELECT TOP 1 'U' FROM PMT01106 A (NOLOCK) JOIN #BARCODE_NETQTY B ON A.product_code=B.product_code
+					AND A.DEPT_ID=B.DEPT_ID AND A.BIN_ID=B.BIN_ID 
+					WHERE A.quantity_in_stock<0)
+		BEGIN	
+			SET @cStep = 186
+		
+					  
+			SELECT A.PRODUCT_CODE,A.QUANTITY_IN_STOCK,'STOCK is GOING NEGATIVE' AS ERRMSG
+			FROM PMT01106 A WITH (NOLOCK)
+			JOIN #BARCODE_NETQTY B ON A.product_code=B.product_code 
+			AND A.DEPT_ID=B.DEPT_ID AND A.BIN_ID=B.BIN_ID 
+			WHERE  A.quantity_in_stock<0
+			
+			set @cErrormsg='Stock Going negative'
+			SET @BNEGSTOCKFOUND=1
+
+			goto end_proc
+		END
+	END
+
+	GOTO END_PROC
+END TRY
+
+BEGIN CATCH
+	SET @cErrormsg='Error in Procedure SP3S_UPDATE_PMTSTOCK_CNPS at Step#'+@cStep+' '+ERROR_MESSAGE()
+	GOTO END_PROC
+END CATCH
+
+END_PROC:
+	
+END

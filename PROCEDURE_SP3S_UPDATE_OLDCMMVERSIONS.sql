@@ -1,0 +1,90 @@
+CREATE PROCEDURE SP3S_UPDATE_OLDCMMVERSIONS
+@nSpId varchar(50),
+@cCmId VARCHAR(50)
+AS
+BEGIN
+	DECLARE @cErrmsg VARCHAR(MAX),@nUpdateMode INT,@bCancelled BIT,@CFILTERCONDITION VARCHAR(200),@cStep VARCHAR(5)
+
+
+BEGIN TRY
+	SET @cStep='10'
+
+	SELECT TOP 1 @bCancelled=cancelled FROM sls_cmm01106_upload (NOLOCK) WHERE sp_id=@nSpId
+
+	SET @nUpdateMode=(CASE WHEN @bCancelled=1 THEN 3 ELSE 2 END)	
+
+	SET @cStep='15'
+	EXEC SP3S_upd_qty_lastupdate
+	@nUpdateMode=@NUPDATEMODE,
+	@cXnType='SLS',
+	@nSpId=@nSpId,
+	@cMasterTable='cmm01106',
+	@cMemoIdCol='cm_id',
+	@cXnDtCol='cm_dt',
+	@cMemoId=@cCmId,
+	@bCalledfromMerging=1,
+	@CERRORMSG=@CERRMSG OUTPUT
+
+	IF ISNULL(@cErrmsg,'')<>''
+		GOTO END_PROC
+	
+	SET @cStep='20'
+	SET @CFILTERCONDITION = ' B.SP_ID='''+LTRIM(RTRIM(@nSpId))+''''
+
+	EXEC UPDATEMASTERXN_MIRROR @CSOURCEDB='',@CSOURCETABLE='sls_cmm01106_upload',@CDESTDB=''
+							  ,@CDESTTABLE='cmm01106',@CKEYFIELD1='cm_id',@CKEYFIELD2='',@CKEYFIELD3=''
+							  ,@LINSERTONLY=0,@CFILTERCONDITION=@CFILTERCONDITION
+							  ,@LUPDATEONLY=1,@BALWAYSUPDATE=1,@BUPDATEXNS=1
+
+	SET @cStep='30'
+	UPDATE paymode_xn_det WITH (ROWLOCK) SET memo_id='XXXXXXXXXX',row_id='XXXX'+CONVERT(VARCHAR(40),NEWID()) 
+	WHERE memo_id=@cCmId AND xn_type='SLS'
+
+	UPDATE cmd_cons WITH (ROWLOCK) SET cm_id='XXXXXXXXXX' WHERE Cm_id=@cCmId
+	
+	SET @cStep='40'
+	UPDATE PACK_SLIP_REF WITH (ROWLOCK)  SET cm_id='XXXXXXXXXX' WHERE Cm_id=@cCmId
+	
+	UPDATE IMAGE_XN_DET  WITH (ROWLOCK) SET memo_id='XXXXXXXXXX' WHERE memo_id=@cCmId
+	and xn_type='SLS'
+
+	SET @cStep='50'
+	UPDATE CMM_FLIGHT WITH (ROWLOCK) SET cm_id='XXXXXXXXXX' WHERE Cm_id=@cCmId
+
+	UPDATE COUPON_REDEMPTION_INFO WITH (ROWLOCK) SET cm_id='XXXXXXXXXX' WHERE Cm_id=@cCmId
+
+	SET @cStep='60'
+	UPDATE GV_MST_REDEMPTION WITH (ROWLOCK)  SET redemption_cm_id='XXXXXXXXXX' WHERE redemption_cm_id=@cCmId
+	
+	UPDATE  DAILOGFILE WITH (ROWLOCK)  SET MEMONO='XXXXXXXXXX' WHERE MEMONO=@cCmId
+
+	DELETE  a FROM  cmd_manualbill_errors a with (ROWLOCK) JOIN cmd01106 b (NOLOCK) ON a.cmd_row_id=b.ROW_ID
+	WHERE cm_id=@cCmId
+	
+	SET @cStep='70'
+	UPDATE cmd01106 WITH (ROWLOCK) SET cm_id='XXXXXXXXXX',row_id='XXXX'+CONVERT(VARCHAR(40), NEWID()) WHERE Cm_id=@cCmId
+	
+	UPDATE rps_mst WITH (ROWLOCK)  SET ref_cm_id='XXXXXXXXXX' WHERE ref_Cm_id=@cCmId
+
+	SET @cStep='80'
+	UPDATE XN_AUDIT_TRIAL_DET WITH (ROWLOCK)   SET xn_id='XXXXXXXXXX' WHERE xn_id=@cCmId
+	AND XN_TYPE='SLS'
+
+	UPDATE cmm_credit_receipt  WITH (ROWLOCK) SET cm_id='XXXXXXXXXX' WHERE cm_id=@cCmId
+
+
+
+	UPDATE POSGRRecos WITH (ROWLOCK) SET cm_id='XXXXXXXXXX' WHERE cm_id=@cCmId
+
+	GOTO END_PROC
+END TRY
+
+BEGIN CATCH
+	SET @cErrmsg='Error in Procedure SP3S_UPDATE_OLDCMMVERSIONS at Step#'+@cStep+' '+ERROR_MESSAGE()
+	GOTO END_PROC
+END CATCH
+
+END_PROC:
+	SELECT ISNULL(@cErrmsg,'') errmsg
+
+END

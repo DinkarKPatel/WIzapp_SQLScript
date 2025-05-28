@@ -1,0 +1,128 @@
+create PROCEDURE SP_PENDINGPO
+@NQUERYID		NUMERIC(3,0), 
+@CWHERE			VARCHAR(50)='',
+@BLOCATION		BIT=0 ,
+@CDEPT_ID		VARCHAR(5)='',
+@nXN_ITEM_TYPE	INT=0,
+@dtLoginDate	DATETIME=''
+--WITH ENCRYPTION    
+AS        
+BEGIN        
+     --(dinkar) Replace  left(memoid,2) to Location_code 
+        DECLARE @LEVEL_NO INT,@DONOT_CHKPO_APPROVAL VARCHAR(10)
+		SELECT TOP 1 @LEVEL_NO=LEVEL_NO  FROM XN_APPROVAL_CHECKLIST_LEVEL_USERS A  
+		WHERE A.XN_TYPE ='PO'	AND DEPT_ID =@CDEPT_ID
+		
+       select @DONOT_CHKPO_APPROVAL=value  from config where config_option='DONOT_CHKPO_APPROVAL'	
+       
+       SELECT @CWHERE AS AC_CODE into #tmpAc_code 
+	   UNION
+	   SELECT MAJOR_AC_CODE  FROM LM01106 WHERE AC_CODE=@CWHERE 
+	   
+     
+			
+IF @NQUERYID=1     
+   GOTO LBL1  
+ELSE IF @NQUERYID=2    
+   GOTO LBL2          
+ELSE   
+   GOTO LAST  
+             
+LBL1:
+     
+
+	 
+
+		 SELECT  B.PO_ID ,B.PO_ID,B.PO_NO,B.PO_DT,B.REF_NO ,B.MODE,LM.AC_CODE,LM.AC_NAME,
+				B.PO_FOR_DEPT_ID,POLOC.DEPT_NAME AS PO_FOR_DEPT_NAME,b.TERMS,B.XN_ITEM_TYPE ,
+				SUM(CASE WHEN PO.XNTYPE='PURCHASEORDER' THEN   ISNULL(PO.QTY,0) ELSE 0 END ) as INVOICE_QUANTITY,
+				sum(case when PO.XnType='PurchaseInvoice' then   isnull(po.Qty,0) else 0 end ) as PUR_QTY,
+				sum(case when PO.XnType='POAdjustment' then   isnull(po.Qty,0) else 0 end ) as ADJ_QTY 
+		 from PurchaseOrderProcessingNew Po (nolock)
+		 join pod01106 A (nolock) on Po.RefRowId  =a.row_id 
+		 join pom01106 b (nolock) on a.po_id =b.po_id 
+		 JOIN #TMPAC_CODE TMP ON TMP.AC_CODE =B.AC_CODE 
+		 JOIN LM01106 LM(NOLOCK) ON LM.AC_CODE=B.AC_CODE 
+		 left JOIN LOCATION POLOC(NOLOCK) ON POLOC.DEPT_ID=B.PO_FOR_DEPT_ID
+		 left JOIN LOCATION LOC(NOLOCK) ON LOC.DEPT_ID=b.location_Code 
+		 WHERE (b.ApprovedLevelNo =99 or @DONOT_CHKPO_APPROVAL='1')
+		 AND 	CANCELLED=0
+		 AND (@CDEPT_ID = '' OR B.DEPT_ID = @CDEPT_ID)
+		 and ISNULL(B.SHORT_CLOSE,0)  <> 1
+		 AND (@nXN_ITEM_TYPE=0 OR B.xn_item_type=@nXN_ITEM_TYPE)
+		 AND B.delivery_dt>=@dtLoginDate
+		 group by  B.PO_ID ,B.PO_ID,B.PO_NO,B.PO_DT,B.REF_NO ,B.MODE,LM.AC_CODE,LM.AC_NAME,
+		 B.PO_FOR_DEPT_ID,POLOC.DEPT_NAME,
+		 b.TERMS,B.XN_ITEM_TYPE
+		 having SUM(CASE WHEN PO.XNTYPE='PURCHASEORDER' THEN   ISNULL(PO.QTY,0) ELSE -1*ISNULL(PO.QTY,0) END )>0
+	     ORDER BY PO_DT DESC     
+			          
+    GOTO LAST                        
+                               
+    
+LBL2:  
+	  ;with Pending_po as
+    (    
+         select RefRowId ,a.po_id ,
+                SUM(CASE WHEN PO.XNTYPE='PURCHASEORDER' THEN   ISNULL(PO.QTY,0) ELSE 0 END ) as PO_QTY,
+				sum(case when PO.XnType='PurchaseInvoice' then   isnull(po.Qty,0) else 0 end ) as PUR_QTY,
+				sum(case when PO.XnType='POAdjustment' then   isnull(po.Qty,0) else 0 end ) as ADJ_QTY 
+      	 from PurchaseOrderProcessingNew Po (nolock)
+		 join pod01106 A (nolock) on Po.RefRowId  =a.row_id 
+		 join pom01106 b (nolock) on a.po_id =b.po_id 
+		 JOIN #TMPAC_CODE TMP ON TMP.AC_CODE =B.AC_CODE 
+		 WHERE (b.ApprovedLevelNo =99 or @DONOT_CHKPO_APPROVAL='1')
+		 AND 	CANCELLED=0
+		 AND (@CDEPT_ID = '' OR B.DEPT_ID = @CDEPT_ID)
+		 and ISNULL(B.SHORT_CLOSE,0)  <> 1
+		 AND (@nXN_ITEM_TYPE=0 OR B.xn_item_type=@nXN_ITEM_TYPE)
+		 AND B.delivery_dt>=@dtLoginDate
+		 group by  RefRowId ,a.po_id
+		 having SUM(CASE WHEN PO.XNTYPE='PURCHASEORDER' THEN   ISNULL(PO.QTY,0) ELSE -1*ISNULL(PO.QTY,0) END )>0
+    )
+
+
+	SELECT K.SECTION_NAME, J.SUB_SECTION_NAME, I.*, C.PARA1_NAME,    
+	 D.PARA2_NAME,E.PARA3_NAME,F.PARA4_NAME,G.PARA5_NAME,H.PARA6_NAME,B.ARTICLE_NO,     
+	 B.ARTICLE_NAME, B.CODING_SCHEME ,B.STOCK_NA  
+	 ,A.*  
+	 ,(CASE WHEN A.PURCHASE_PRICE =0 THEN B.purchase_price ELSE A.PURCHASE_PRICE END)* A.INVOICE_QUANTITY AS 'AMOUNT'  ,  
+	 ISNULL(B.DT_CREATED,'') AS [ART_DT_CREATED],ISNULL(E.DT_CREATED,'') AS [PARA3_DT_CREATED],  
+	 CAST( 0 AS BIT) AS CHECKED,  
+	 (tmp.PO_QTY)  AS PO_QTY  
+	 ,ISNULL(A.SCHEME_QUANTITY,0) AS PO_SCHEME_QUANTITY  
+	 ,CASE WHEN ISNULL(A.SCHEME_QUANTITY,0)<>0 THEN 0 ELSE ((tmp.PO_QTY)-(ISNULL(tmp.pur_qty,0)+ISNULL(tmp.ADJ_QTY,0))) END AS REC_QTY  
+	 ,0 AS REC_QTY_FOC  
+	 --VISHAL  
+	  
+	 ,B.STOCK_NA,FRM.*,A.WHOLESALE_PRICE AS [WHOLESALE_PRICE],POM.MODE  
+	 ,POM.DISCOUNT_PERCENTAGE AS BILL_LEVEL_DISC,B.ALIAS AS ARTICLE_ALIAS,  
+	 POM.AC_CODE,pom.TERMS,  
+	 (CASE WHEN ISNULL(A.HSN_CODE,'')='' THEN B.HSN_CODE ELSE A.HSN_CODE END) AS HSN_CODE_PO,B.PERISHABLE ,POM.XN_ITEM_TYPE  
+	 ,B.purchase_price AS ART_purchase_price,A.tolerance_percentage,B.para1_set,B.para2_set  
+	 ,CAST(1 AS NUMERIC(5)) AS ROLLS,I.UOM_NAME ,isnull(POM.po_emp_code,'0000000') as po_emp_code  ,EMP.emp_name 
+	FROM Pending_po tmp
+	join POD01106 A (NOLOCK) on tmp.RefRowId =a.row_id 
+	JOIN POM01106 POM (NOLOCK) ON A.PO_ID = POM.PO_ID 
+	JOIN ARTICLE B (NOLOCK) ON A.ARTICLE_CODE = B.ARTICLE_CODE   
+	JOIN PARA1 C (NOLOCK) ON A.PARA1_CODE = C.PARA1_CODE  
+	JOIN PARA2 D (NOLOCK) ON A.PARA2_CODE = D.PARA2_CODE  
+	JOIN PARA3 E (NOLOCK) ON A.PARA3_CODE = E.PARA3_CODE  
+	JOIN PARA4 F (NOLOCK) ON A.PARA4_CODE = F.PARA4_CODE  
+	JOIN PARA5 G (NOLOCK) ON A.PARA5_CODE = G.PARA5_CODE  
+	JOIN PARA6 H (NOLOCK) ON A.PARA6_CODE = H.PARA6_CODE  
+	JOIN UOM I (NOLOCK) ON B.UOM_CODE = I.UOM_CODE  
+	JOIN SECTIOND J (NOLOCK) ON B.SUB_SECTION_CODE = J.SUB_SECTION_CODE  
+	JOIN SECTIONM K (NOLOCK) ON J.SECTION_CODE = K.SECTION_CODE		
+	LEFT JOIN FORM FRM (NOLOCK) ON FRM.FORM_ID=A.FORM_ID 
+	JOIN LOCATION LOC(NOLOCK) ON LOC.DEPT_ID=pom.location_Code 
+	LEFT OUTER JOIN SKU(NOLOCK) ON SKU.PRODUCT_CODE=A.PRODUCT_CODE
+	LEFT OUTER JOIN EMPLOYEE EMP (NOLOCK) ON POM.PO_EMP_CODE = EMP.EMP_CODE
+	ORDER BY A.SRNO   
+	
+	
+    GOTO LAST 
+    
+LAST:          
+END
+

@@ -1,0 +1,1 @@
+delete from wz_maintainance_postmonitor_run

@@ -1,0 +1,1 @@
+---Discarded this Procedure now onwards because we have written new process to store xfp column at pmtlocs table level..

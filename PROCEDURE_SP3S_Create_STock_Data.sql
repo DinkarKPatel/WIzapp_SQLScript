@@ -1,0 +1,127 @@
+CREATE PROCEDURE SP3S_CREATE_STOCK_DATA--(LocId 3 digit change  by Sanjay:04-11-2024)
+(
+@NMODE INT=1 , ---   1-YEARWISE ,2-MONTHWISE ,3-DATEWISE ,4-XNIDWISE
+@YEAR  VARCHAR(4)='', 
+@XN_TYPE VARCHAR(10)='', 
+@MONTH VARCHAR(4)='',
+@DATE DATETIME ='',
+@CLOCID VARCHAR(4)=''
+)
+AS
+BEGIN
+
+	BEGIN TRY
+	  BEGIN TRANSACTION	 
+	
+	     DECLARE @CCMD NVARCHAR(MAX),@CHOID VARCHAR(4),@CERRORMSG VARCHAR(MAX),@NSTEP INT
+              
+              SELECT @CHOID=VALUE FROM CONFIG WHERE CONFIG_OPTION='HO_LOCATION_ID' 
+
+			  if @CLOCID=''
+              SELECT @CLOCID=DEPT_ID FROM NEW_APP_LOGIN_INFO (nolock) WHERE SPID=@@SPID 
+              
+              
+              IF @CHOID<>@CLOCID AND @NMODE=2 AND ( @YEAR='' OR @XN_TYPE='')
+                BEGIN
+                      SET @CERRORMSG='YEAR OR XN_TYPE CAN''T BE BLANK IN CASE OF MONTH WISE DATA'
+                      GOTO END_PROC
+                 
+                END
+              IF @CHOID<>@CLOCID AND @NMODE=3 AND (@YEAR='' OR @XN_TYPE='' OR @MONTH='')
+                BEGIN
+                      SET @CERRORMSG='YEAR OR XN_TYPE OR MONTH CAN''T BE BLANK IN CASE OF DATE WISE DATA'
+                      GOTO END_PROC
+                 
+                END
+              IF @CHOID<>@CLOCID AND @NMODE=4 AND (@DATE='' OR @XN_TYPE='')
+                BEGIN
+                      SET @CERRORMSG='DATE OR XN_TYPE CAN''T BE BLANK IN CASE OF MEMO ID WISE DATA'
+                      GOTO END_PROC
+                 
+                END
+              
+              IF @CHOID<>@CLOCID ----FOR LOCATION
+              BEGIN
+                  IF  @NMODE=1 ---- YEAR WISE DATA 
+				  BEGIN
+					   SELECT DEPT_ID,XN_TYPE,YEAR(XN_DT) AS XN_YEAR,
+					   CAST(SUM(XN_QTY) AS NUMERIC(10,2)) AS XN_QTY,
+					   (CASE WHEN XN_TYPE IN ('SLS','SLR') THEN 
+					   CAST(SUM(XN_NET)AS NUMERIC(10,2))
+					   ELSE 0 END) AS XN_AMOUNT   FROM VW_XNSREPS 
+					   WHERE DEPT_ID=@CLOCID
+					   GROUP BY DEPT_ID,XN_TYPE,YEAR(XN_DT)
+					   ORDER BY DEPT_ID,XN_TYPE,YEAR(XN_DT)
+				  END
+				  
+				  IF  @NMODE=2 ---- MONTH WISE DATA
+				  BEGIN
+				        
+					   SELECT DEPT_ID,XN_TYPE,YEAR(XN_DT) AS XN_YEAR,MONTH(XN_DT) AS XN_MONTH,
+					   CAST(SUM(XN_QTY) AS NUMERIC(10,2)) AS XN_QTY,
+					   (CASE WHEN XN_TYPE IN ('SLS','SLR') THEN 
+					   CAST(SUM(XN_NET)AS NUMERIC(10,2))
+					   ELSE 0 END) AS XN_AMOUNT   FROM VW_XNSREPS 
+					   WHERE DEPT_ID=@CLOCID
+					   AND YEAR(XN_DT)=@YEAR 
+					   AND XN_TYPE=@XN_TYPE
+					   GROUP BY DEPT_ID,XN_TYPE,YEAR(XN_DT) ,MONTH(XN_DT)
+					   ORDER BY   DEPT_ID,XN_TYPE,YEAR(XN_DT),MONTH(XN_DT)
+				  END
+				  
+				  IF  @NMODE=3 ---- DATE WISE DATA
+				  BEGIN
+				        
+					    SELECT DEPT_ID,XN_TYPE,XN_DT AS XN_DATE,
+					    CAST(SUM(XN_QTY) AS NUMERIC(10,2)) AS XN_QTY,
+					    (CASE WHEN XN_TYPE IN ('SLS','SLR') THEN 
+					    CAST(SUM(XN_NET)AS NUMERIC(10,2)) ELSE 0 END) AS XN_AMOUNT   
+					    FROM VW_XNSREPS 
+					    WHERE DEPT_ID=@CLOCID AND YEAR(XN_DT)=@YEAR
+						AND MONTH(XN_DT)=@MONTH AND XN_TYPE=@XN_TYPE
+						GROUP BY DEPT_ID,XN_TYPE,XN_DT
+						ORDER BY   DEPT_ID,XN_TYPE,XN_DT
+						
+				  END
+				  
+				  IF  @NMODE=4 ---- XN ID WISE DATA
+				  BEGIN
+				        
+					    SELECT DEPT_ID,XN_TYPE,XN_ID,CONVERT(BIT,0) AS CANCELLED,
+					    CAST(SUM(XN_QTY) AS NUMERIC(10,2)) AS XN_QTY,
+					    (CASE WHEN XN_TYPE IN ('SLS','SLR') THEN 
+					    CAST(SUM(XN_NET)AS NUMERIC(10,2)) ELSE 0 END) AS XN_AMOUNT   
+					    FROM VW_XNSREPS 
+					    WHERE DEPT_ID=@CLOCID AND XN_DT=@DATE AND XN_TYPE=@XN_TYPE
+						GROUP BY DEPT_ID,XN_TYPE,XN_ID
+						ORDER BY   DEPT_ID,XN_TYPE,XN_ID
+						
+				  END
+              END
+                       
+	
+END TRY
+	BEGIN CATCH
+		SET @CERRORMSG = 'STEP- ' + LTRIM(STR(@NSTEP)) + ' SQL ERROR: #' + LTRIM(STR(ERROR_NUMBER())) + ' ' + ERROR_MESSAGE()
+		GOTO END_PROC
+	END CATCH
+	
+END_PROC:
+
+	IF @@TRANCOUNT>0
+	BEGIN
+		IF ISNULL(@CERRORMSG,'')='' 
+			COMMIT TRANSACTION
+		ELSE
+			BEGIN
+			ROLLBACK
+			SELECT ISNULL(@CERRORMSG,'') AS ERRMSG
+			END
+
+			
+	END
+	
+	
+	
+END						-- SP3S_CREATE_STOCK_DATA
+------------------------------------------------------ END OF PROCEDURE SP3S_CREATE_STOCK_DATA

@@ -1,0 +1,43 @@
+CREATE PROC VALIDATEXN_WOD_BEFORE_EDIT 
+@CMEMOID VARCHAR(30),
+@BCANCELXN BIT,
+@CERRORMSG VARCHAR(200) OUTPUT,
+@CEXPRERRORMSG VARCHAR(200) OUTPUT
+--WITH ENCRYPTION
+AS
+BEGIN
+	
+	DECLARE @CTEXT VARCHAR(10),@CPRODUCTCODE VARCHAR(50)
+	
+	SET @CPRODUCTCODE=''
+	SET @CERRORMSG=''
+	SET @CEXPRERRORMSG=''
+	SET @CTEXT=(CASE WHEN @BCANCELXN=1 THEN 'CANCEL' ELSE 'EDIT' END)
+
+	   --IF EXISTS (SELECT TOP 1 'U' FROM BUYER_ORDER_MST WHERE  order_id =@CMEMOID and isnull(ApprovedLevelNo,0)=99 ) 
+	   --BEGIN
+		  --  SET @CERRORMSG='ORDER HAS BEEN APPROVED BY USER.....CAN NOT '+@CTEXT
+	   --     RETURN
+    --   END
+	   
+	
+	  IF EXISTS (SELECT TOP 1 'U' FROM BUYER_ORDER_MST WHERE  order_id =@CMEMOID and isnull(short_close,0)=1 ) 
+	   BEGIN
+		    SET @CERRORMSG='ORDER HAS BEEN Already short_close .....CAN NOT '+@CTEXT
+	        RETURN
+       END
+
+	IF EXISTS ( select top 1   xntype from SalesOrderProcessing (nolock)
+	WHERE XNTYPE IN('ORDERPICKLIST','ORDERPACKSLIP','ORDERINVOICE') and refmemoid=@CMEMOID and Qty >0) 
+	begin
+	     
+		 declare @cxntype varchar(20)
+		 select top 1  @cxntype=xntype from SalesOrderProcessing (nolock)
+	     WHERE XNTYPE IN('ORDERPICKLIST','ORDERPACKSLIP','ORDERINVOICE') and refmemoid=@CMEMOID and Qty >0
+
+		 SET @CERRORMSG=@cxntype +' HAS BEEN Generated .....CAN NOT '+@CTEXT
+	      RETURN
+
+	end
+
+END

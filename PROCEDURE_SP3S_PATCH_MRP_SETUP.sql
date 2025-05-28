@@ -1,0 +1,12 @@
+CREATE PROCEDURE SP3S_PATCH_MRP_SETUP    
+   
+AS    
+BEGIN    
+                
+   DECLARE @CCMD NVARCHAR(MAX)    
+                 
+   SET @CCMD ='SELECT OLD_MRP,NEW_MRP,NEWID() AS ROW_ID FROM PATCH_MRP_SETUP'     
+   PRINT @CCMD    
+   EXEC SP_EXECUTESQL @CCMD      
+        
+END

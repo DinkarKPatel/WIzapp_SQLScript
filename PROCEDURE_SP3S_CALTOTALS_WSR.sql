@@ -1,0 +1,384 @@
+CREATE PROCEDURE SP3S_CALTOTALS_WSR--(LocId 3 digit change only increased the parameter width by Sanjay:04-11-2024)
+@nUpdatemode NUMERIC(2,0),
+@nSpId VARCHAR(40)='',
+@cCnId VARCHAR(40)='',
+@nCnType NUMERIC(1,0),
+@BCALLEDFROMPACKSLIP BIT,
+@CERRORMSG VARCHAR(MAX) OUTPUT,
+@CLOCID varchar(4)=''
+AS
+BEGIN
+
+		
+	DECLARE @cStep VARCHAR(5),@DMEMO_DT datetime,@ApplyCDOnTotal varchar(5),@nDnType NUMERIC(1,0),@NMODE NUMERIC(1,0),	
+	@cTerms VARCHAR(500),@nBaseAmount NUMERIC(20,2),@NTAX numeric(10,2),@CGSTCUTOFFDATE varchar(10),@gstdate datetime,@NEXCISEDUTY numeric(10,2),
+	@nSubtotal numeric(14,2),@nPimDiscount numeric(14,2),@nTotalAmount numeric(14,2),@nTaxmethod numeric(1,0),@nTotalTax numeric(10,2),
+	@NCASHDISCOUNTAMOUNT numeric(14,2),@cCmd NVARCHAR(MAX),@cTempMasterTable VARCHAR(200),@cTempDetailTable VARCHAR(200),
+	@cInsSPId varchar(5),@cMstTable VARCHAR(200),@cDetTable VARCHAR(200),@cWhereClause VARCHAR(200),@cWhereClauseCnd VARCHAR(200),
+	@cKeyField VARCHAR(200)
+
+
+BEGIN TRY
+
+
+	
+	SET @cStep=10
+
+	SET @CINSSPID=LEFT(@nSpId,38)
+	IF @nUpdatemode NOT IN (1,2)
+		SELECT @cMstTable='cnm01106',@cDetTable='cnd01106',@cWhereClause='a.cn_id='''+@cCnId+'''',
+		@cKeyField='cn_id',
+		@cWhereClauseCnd='a.cn_id='''+@cCnId+''''
+	ELSE
+		SELECT @cMstTable='wsr_cnm01106_upload',@cDetTable='wsr_cnd01106_upload',
+		@cWhereClause='sp_id='''+@nSpId+'''',@cKeyField='sp_id',
+		@cWhereClauseCnd='sp_id='''+@nSpId+''''+(case when   @BCALLEDFROMPACKSLIP=0 then '' else ' or sp_id='''+@CINSSPID+'''' end)
+	
+	SET @cStep=10.4
+	SELECT ac_code,party_dept_id,FREIGHT_HSN_CODE,OTHER_CHARGES_HSN_CODE,PARTY_STATE_CODE,DISCOUNT_AMOUNT,subtotal,cn_dt,
+	 cn_type, TOTAL_QUANTITY_STR,TOTAL_QUANTITY,Total_Gst_Amount,MANUAL_DISCOUNT,DISCOUNT_PERCENTAGE,
+	 OTHER_CHARGES,round_off,manual_roundoff,OTHER_CHARGES_IGST_AMOUNT,OTHER_CHARGES_cGST_AMOUNT,OTHER_CHARGES_sGST_AMOUNT,
+	FREIGHT_IGST_AMOUNT,FREIGHT_cGST_AMOUNT,FREIGHT_sGST_AMOUNT,OH_TAX_METHOD,GST_ROUND_OFF,total_amount,OTHER_CHARGES_TAXABLE_VALUE,
+	FREIGHT_TAXABLE_VALUE,freight,mode,DO_NOT_CALC_GST_OH,FREIGHT_GST_PERCENTAGE,other_charges_gst_percentage,
+	insurance,insurance_hsn_code,INSURANCE_TAXABLE_VALUE,insurance_cgst_amount,insurance_sgst_amount,insurance_igst_amount,
+	insurance_gst_percentage,billed_from_dept_id,Total_gst_cess_amount,
+	broker_tds_percentage, broker_tds_Amount,broker_comm_amount,MANUAL_GST_PER_FREIGHT ,MANUAL_GST_PER_OTH 
+	INTO  #tWsrMstTable FROM cnm01106 (NOLOCK) WHERE 1=2
+	
+	SET @cStep=10.6
+	select hsn_code,GST_PERCENTAGE,igst_amount,cgst_amount,sgst_amount,xn_value_without_gst,xn_value_with_gst,bill_level_tax_method,
+	CNMDISCOUNTAMOUNT,net_rate,invoice_quantity,manual_rate,
+	item_tax_percentage,item_tax_amount,product_code,discount_amount,manual_discount,rate,discount_percentage,
+	quantity,CESS_AMOUNT,row_id,inv_dt,gst_cess_percentage,gst_cess_amount,inv_no,TAX_ROUND_OFF
+	into #tWsrDetTable FROM cnd01106 (NOLOCK) WHERE 1=2
+	
+	SET @cStep=10.8
+	SET @cCmd=N'SELECT ac_code,party_dept_id,billed_from_dept_id,FREIGHT_HSN_CODE,OTHER_CHARGES_HSN_CODE,PARTY_STATE_CODE,DISCOUNT_AMOUNT,subtotal,cn_dt,
+	 cn_type, TOTAL_QUANTITY_STR,TOTAL_QUANTITY,Total_Gst_Amount,MANUAL_DISCOUNT,DISCOUNT_PERCENTAGE,
+	 OTHER_CHARGES,freight,insurance,round_off,manual_roundoff,OTHER_CHARGES_IGST_AMOUNT,OTHER_CHARGES_cGST_AMOUNT,OTHER_CHARGES_sGST_AMOUNT,
+	FREIGHT_IGST_AMOUNT,FREIGHT_cGST_AMOUNT,FREIGHT_sGST_AMOUNT,OH_TAX_METHOD,GST_ROUND_OFF,total_amount,mode,
+	DO_NOT_CALC_GST_OH,broker_tds_percentage, broker_tds_Amount,broker_comm_amount,MANUAL_GST_PER_FREIGHT ,MANUAL_GST_PER_OTH ,FREIGHT_GST_PERCENTAGE,other_charges_gst_percentage
+	FROM '+@cMstTable+' a WHERE '+@cWhereClause
+
+	print @cCmd
+
+	INSERT #tWsrMstTable (ac_code,party_dept_id,billed_from_dept_id,FREIGHT_HSN_CODE,OTHER_CHARGES_HSN_CODE,PARTY_STATE_CODE,DISCOUNT_AMOUNT,subtotal,cn_dt,
+	 cn_type, TOTAL_QUANTITY_STR,TOTAL_QUANTITY,Total_Gst_Amount,MANUAL_DISCOUNT,DISCOUNT_PERCENTAGE,
+	 OTHER_CHARGES,freight,insurance,round_off,manual_roundoff,OTHER_CHARGES_IGST_AMOUNT,OTHER_CHARGES_cGST_AMOUNT,OTHER_CHARGES_sGST_AMOUNT,
+	FREIGHT_IGST_AMOUNT,FREIGHT_cGST_AMOUNT,FREIGHT_sGST_AMOUNT,OH_TAX_METHOD,GST_ROUND_OFF,total_amount,mode,
+	DO_NOT_CALC_GST_OH,broker_tds_percentage, broker_tds_Amount,broker_comm_amount,MANUAL_GST_PER_FREIGHT ,MANUAL_GST_PER_OTH,FREIGHT_GST_PERCENTAGE,other_charges_gst_percentage )
+	EXEC SP_EXECUTESQL @cCmd
+
+	SET @cStep=12
+	SET @cCmd=N'SELECT hsn_code,GST_PERCENTAGE,igst_amount,cgst_amount,sgst_amount,xn_value_without_gst,xn_value_with_gst,bill_level_tax_method,
+	CNMDISCOUNTAMOUNT,net_rate,invoice_quantity,manual_rate,
+	item_tax_percentage,item_tax_amount,product_code,discount_amount,manual_discount,rate,discount_percentage,
+	quantity,CESS_AMOUNT,row_id,inv_dt,inv_no
+	FROM '+@cDetTable+' a WHERE '+@cWhereClauseCnd
+
+	INSERT #tWsrDetTable (hsn_code,GST_PERCENTAGE,igst_amount,cgst_amount,sgst_amount,xn_value_without_gst,
+	xn_value_with_gst,bill_level_tax_method,CNMDISCOUNTAMOUNT,net_rate,invoice_quantity,manual_rate,
+	item_tax_percentage,item_tax_amount,product_code,discount_amount,manual_discount,rate,discount_percentage,
+	quantity,CESS_AMOUNT,row_id,inv_dt,inv_no)
+	EXEC SP_EXECUTESQL @cCmd
+
+	SET @cSTEP=12.6
+	UPDATE #tWsrDetTable with (rowlock) SET HSN_CODE='0000000000',GST_PERCENTAGE=0,IGST_AMOUNT=0,CGST_AMOUNT=0,SGST_AMOUNT=0,
+	XN_VALUE_WITHOUT_GST=0,
+	XN_VALUE_WITH_GST=0 ,
+	gst_cess_percentage=0,
+	gst_cess_amount=0
+	WHERE  ISNULL(HSN_CODE,'')=''
+		
+	SET @cStep=127
+	SET @CCMD = N'UPDATE #tWsrMstTable  SET FREIGHT_HSN_CODE= CASE WHEN ISNULL(FREIGHT_HSN_CODE,'''')='''' THEN ''0000000000'' ELSE FREIGHT_HSN_CODE END,
+		            OTHER_CHARGES_HSN_CODE= CASE WHEN ISNULL(OTHER_CHARGES_HSN_CODE,'''')='''' THEN ''0000000000'' 
+					ELSE OTHER_CHARGES_HSN_CODE END'
+		              
+	EXEC SP_EXECUTESQL @CCMD 
+	
+	
+	
+	
+		SET @cStep=128
+		SET @CCMD = 'UPDATE #tWsrMstTable  SET PARTY_STATE_CODE=''00'' WHERE ISNULL(PARTY_STATE_CODE,'''')='''''
+		EXEC SP_EXECUTESQL @CCMD 
+		
+		SET @cStep=129
+	
+		SET @CCMD = 'UPDATE #tWsrDetTable   SET BILL_LEVEL_TAX_METHOD=2 where  BILL_LEVEL_TAX_METHOD=0 '
+		EXEC SP_EXECUTESQL @CCMD
+		
+		
+		--CALCULATE RMMDISCOUNTAMOUN
+		
+       SET @cStep = 510
+	   DECLARE @NTOTAL_DISCOUNT_AMOUNT NUMERIC(10,2)
+	   SELECT   @NTOTAL_DISCOUNT_AMOUNT= ISNULL(DISCOUNT_AMOUNT,0)  FROM  #tWsrMstTable  A
+	   
+	   UPDATE #tWsrDetTable SET NET_RATE=(CASE WHEN MANUAL_RATE=0 THEN RATE-(DISCOUNT_AMOUNT/INVOICE_QUANTITY) ELSE NET_RATE END)
+
+	
+	   	
+       SET @CCMD = N'UPDATE A SET CNMDISCOUNTAMOUNT=ROUND((CASE WHEN B.SUBTOTAL=0 THEN 0 ELSE (B.DISCOUNT_AMOUNT/B.SUBTOTAL)*(A.net_rate*A.INVOICE_QUANTITY) END),2)
+	    FROM #tWsrDetTable A  with (rowlock)
+	    JOIN  #tWsrMstTable  B (NOLOCK) ON 1=1'
+	   EXEC SP_EXECUTESQL @CCMD 
+	   
+       SET @cStep = 510
+	   IF ISNULL(@NTOTAL_DISCOUNT_AMOUNT,0)<>0
+	   BEGIN 
+	   	   EXEC SP3S_REPROCESS_WSR_BILL_DISCOUNT @NSPID,@CERRORMSG OUTPUT 
+		   IF ISNULL(@CERRORMSG,'')<>''
+		   GOTO END_PROC  
+	   END  
+		--
+		
+		
+		--GST CALCULATION
+		DECLARE @DINV_DT DATETIME,@BCALCULATEGSTWSR BIT,@DONOTENFORCEBILLSELECTION BIT
+        SELECT @CGSTCUTOFFDATE=VALUE FROM CONFIG WHERE CONFIG_OPTION ='GST_CUT_OFF_DATE'
+
+        SET @BCALCULATEGSTWSR=0
+        SELECT @NMODE=MODE,@DMEMO_DT=cn_dt FROM #tWsrMstTable
+	    		
+		SET @cStep=130
+	
+		IF @CGSTCUTOFFDATE<>''
+           SELECT @GSTDATE=CAST(@CGSTCUTOFFDATE AS DATETIME)
+        
+		SET @cStep=135
+   
+     --   SET @CCMD=N'SELECT TOP 1 @DINV_DT=BILL_DT FROM '+@CTEMPDETAILTABLE+' WHERE BILL_DT>''2017-06-30'''
+	    --EXEC SP_EXECUTESQL @CCMD,N'@DINV_DT DATETIME OUTPUT ',@DINV_DT OUTPUT	 
+		
+	
+        IF ISNULL(@DMEMO_DT ,'')>'2017-06-30'
+			SET @BCALCULATEGSTWSR =1
+		ELSE
+			SET @BCALCULATEGSTWSR =0 --CONDITION ON ITEM LEVEL
+     
+        IF @BCALCULATEGSTWSR=1
+        BEGIN
+			SET @cStep=135.2
+
+			
+			EXEC SP3S_GST_TAX_CAL 'WSR',@cCnId,@DMEMO_DT,@NSPID,'',0,0,'',@CERRORMSG OUTPUT ,@CLOCID
+			
+		
+
+
+			IF ISNULL(@CERRORMSG,'')<>''
+				GOTO END_PROC 
+
+			SET @cStep=135.4
+			SET @CCMD = N'UPDATE #tWsrDetTable SET ITEM_TAX_PERCENTAGE=0,ITEM_TAX_AMOUNT=0'
+			EXEC SP_EXECUTESQL @CCMD
+	    
+	    END
+	    ELSE
+	    BEGIN
+	       	SET @cStep=135.6
+			SET @CCMD = N'UPDATE #tWsrDetTable SET SET INSURANCE_HSN_CODE=''0000000000'',
+			OTHER_CHARGES_HSN_CODE=''0000000000'',FREIGHT_HSN_CODE=''0000000000'',PARTY_STATE_CODE=''00'' '
+			EXEC SP_EXECUTESQL @CCMD 
+			
+	    END
+		
+		SET @cStep=135.8
+	    SET @CCMD = N'UPDATE #tWsrMstTable SET 
+	              OTHER_CHARGES_HSN_CODE=CASE WHEN OTHER_CHARGES=0 THEN ''0000000000'' ELSE OTHER_CHARGES_HSN_CODE END,
+				  INSURANCE_HSN_CODE=CASE WHEN INSURANCE=0 THEN ''0000000000'' ELSE INSURANCE_HSN_CODE END,
+	              FREIGHT_HSN_CODE=CASE WHEN FREIGHT=0 THEN ''0000000000'' ELSE FREIGHT_HSN_CODE END
+	              '
+	  print @cCmd
+	  EXEC SP_EXECUTESQL @CCMD
+		
+	  UPDATE #tWsrDetTable SET DISCOUNT_AMOUNT
+		=(CASE  WHEN MANUAL_RATE=1 THEN (RATE-NET_RATE) 
+				WHEN MANUAL_DISCOUNT=0 THEN ((RATE*INVOICE_QUANTITY)*DISCOUNT_PERCENTAGE)/100 
+				ELSE DISCOUNT_AMOUNT END)
+		,DISCOUNT_PERCENTAGE=(CASE WHEN (MANUAL_RATE=1 AND RATE<>0) 
+								THEN (((RATE-NET_RATE)/RATE)*100)	ELSE DISCOUNT_PERCENTAGE END)	
+
+LBLRECALAMOUNT:
+		
+	
+		 IF @BCALCULATEGSTWSR=1 
+	     BEGIN    
+			SET @cStep=136.1
+			  EXEC SP3S_REPROCESS_GST_CALCULATION '','WSR',0,@CERRORMSG OUTPUT 
+			  IF ISNULL(@CERRORMSG,'')<>''
+			  GOTO END_PROC
+	     END
+	 
+	 SET @cStep=136.3
+			
+		SET @cStep = 155
+		DECLARE @NEXCLTAX NUMERIC(10,2), @NGSTCESSAMOUNT NUMERIC(10,2)
+		
+		
+		SET @cStep = 156 --- DONT REMOVE IT (SUMIT)
+		
+		
+
+		DECLARE @STR VARCHAR(MAX),@STR1 VARCHAR(MAX)
+		SET @STR=NULL
+		SET @STR1=NULL
+
+		SELECT  @STR =  COALESCE(@STR +  '/ ', ' ' ) + (''+C.UOM_NAME+': '+CAST(SUM(QUANTITY) AS VARCHAR) +' ')  
+		 FROM #tWsrDetTable A  
+		 JOIN SKU S (NOLOCK) ON S.PRODUCT_CODE=A.PRODUCT_CODE
+		 JOIN ARTICLE B (NOLOCK) ON S.ARTICLE_CODE=B.ARTICLE_CODE
+		JOIN UOM C (NOLOCK) ON C.UOM_CODE=B.UOM_CODE
+		 GROUP BY C.UOM_NAME
+		
+
+		DECLARE @ntotaltaxable_value numeric(18,2)
+		
+		SELECT @ntotaltaxable_value=sum(xn_value_without_gst)
+		FROM #tWsrDetTable
+		
+		UPDATE #tWsrMstTable SET TOTAL_QUANTITY_STR =@STR  ,broker_tds_Amount=@ntotaltaxable_value*broker_tds_percentage/100
+			   
+		
+		
+		SET @cStep = 157
+		-- UPDATING TOTALS IN RMM TABLE
+		UPDATE A SET SUBTOTAL = ISNULL(B.SUBTOTAL,0),
+		             TOTAL_QUANTITY=ISNULL(B.INVOICE_QUANTITY,0),
+		             Total_Gst_Amount=isnull(B.GST_AMOUNT ,0),
+					 TOTAL_GST_CESS_AMOUNT=ISNULL(B.GST_cesS_amount,0)
+		             
+		FROM #tWsrMstTable A LEFT OUTER JOIN
+		( 	
+			SELECT	SUM((CONVERT(NUMERIC(18,4),net_rate)*INVOICE_QUANTITY)) AS SUBTOTAL, 
+			               SUM(QUANTITY) AS INVOICE_QUANTITY,
+			               SUM(ISNULL(IGST_AMOUNT,0)+ ISNULL(CGST_AMOUNT,0)+ISNULL(SGST_AMOUNT,0)) AS GST_AMOUNT,
+						   SUM(ISNULL(GST_cesS_amount,0)) AS GST_cesS_amount
+			FROM #tWsrDetTable
+		) B ON  1=1
+
+		
+       
+		UPDATE #tWsrMstTable SET DISCOUNT_AMOUNT =(CASE WHEN MANUAL_DISCOUNT=0 THEN (SUBTOTAL*DISCOUNT_PERCENTAGE/100)
+		ELSE DISCOUNT_AMOUNT END)
+		
+		SET @cStep = 160
+		SELECT @NSUBTOTAL=SUBTOTAL FROM #tWsrMstTable
+		
+		--FIND GST CUT OFF DATE & AFTER 1 JULY 2017 CALCULATE GST
+		
+        	
+			
+		SET @cStep = 165
+			
+ 
+		IF NOT EXISTS (SELECT TOP 1 PRODUCT_CODE FROM #tWsrDetTable )
+		BEGIN
+			SET @cStep = 170
+			UPDATE #tWsrMstTable with (rowlock)  SET OTHER_CHARGES=0,FREIGHT=0,insurance=0
+			
+		END
+	
+		SELECT @NEXCLTAX=SUM(ITEM_TAX_AMOUNT+ISNULL(IGST_AMOUNT,0)+ISNULL(CGST_AMOUNT,0)+ISNULL(SGST_AMOUNT,0)+ISNULL(CESS_AMOUNT,0)) ,
+		       @NGSTCESSAMOUNT=SUM(ISNULL(GST_CESS_AMOUNT,0)) 
+		FROM #tWsrDetTable WHERE BILL_LEVEL_TAX_METHOD=1
+
+	
+		
+		
+		SET @cStep = 180		
+		UPDATE #tWsrMstTable SET ROUND_OFF=(CASE WHEN MANUAL_ROUNDOFF=0 THEN ROUND((SUBTOTAL + ISNULL(@NexclTAX,0) +ISNULL(@NGSTCESSAMOUNT,0) + OTHER_CHARGES + 
+		             CASE WHEN OH_TAX_METHOD=2 THEN 0 ELSE ISNULL(OTHER_CHARGES_IGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_CGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_SGST_AMOUNT,0)+ISNULL(FREIGHT_IGST_AMOUNT,0)+ISNULL(FREIGHT_CGST_AMOUNT,0)+ISNULL(FREIGHT_SGST_AMOUNT,0)+
+		             ISNULL(INSURANCE_IGST_AMOUNT,0)+ISNULL(INSURANCE_CGST_AMOUNT,0)+ISNULL(INSURANCE_SGST_AMOUNT,0) END +
+					 FREIGHT+INSURANCE ) - DISCOUNT_AMOUNT,0)-
+					 (SUBTOTAL+ ISNULL(@NexclTAX,0)+ISNULL(@NGSTCESSAMOUNT,0) +OTHER_CHARGES+
+					  CASE WHEN OH_TAX_METHOD=2 THEN 0 ELSE  ISNULL(OTHER_CHARGES_IGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_CGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_SGST_AMOUNT,0)+ISNULL(FREIGHT_IGST_AMOUNT,0)+ISNULL(FREIGHT_CGST_AMOUNT,0)+ISNULL(FREIGHT_SGST_AMOUNT,0)+
+					 ISNULL(INSURANCE_IGST_AMOUNT,0)+ISNULL(INSURANCE_CGST_AMOUNT,0)+ISNULL(INSURANCE_SGST_AMOUNT,0) END +
+					 FREIGHT+INSURANCE -DISCOUNT_AMOUNT)
+					 ELSE ROUND_OFF END)
+		
+			
+		SET @cStep=190
+
+	
+		
+		UPDATE #tWsrMstTable SET 
+		TOTAL_AMOUNT=(SUBTOTAL +ISNULL(@NEXCLTAX,0) +ISNULL(@NGSTCESSAMOUNT,0) +  OTHER_CHARGES + 
+		CASE WHEN OH_TAX_METHOD=2 THEN 0 ELSE ISNULL(OTHER_CHARGES_IGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_CGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_SGST_AMOUNT,0)+ISNULL(FREIGHT_IGST_AMOUNT,0)+ISNULL(FREIGHT_CGST_AMOUNT,0)+ISNULL(FREIGHT_SGST_AMOUNT,0)+
+		ISNULL(INSURANCE_IGST_AMOUNT,0)+ISNULL(INSURANCE_CGST_AMOUNT,0)+ISNULL(INSURANCE_SGST_AMOUNT,0) END +
+					 FREIGHT+ROUND_OFF+INSURANCE ) - DISCOUNT_AMOUNT
+		
+
+		
+		SET @cStep=192	
+		IF EXISTS (SELECT TOP 1 total_amount FROM #tWsrMstTable WHERE  cn_dt>='2017-07-01')		
+			UPDATE A SET GST_ROUND_OFF=(TOTAL_AMOUNT-(ISNULL(OTHER_CHARGES_TAXABLE_VALUE,0)+ISNULL(OTHER_CHARGES_IGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_CGST_AMOUNT,0)+
+			 ISNULL(OTHER_CHARGES_SGST_AMOUNT,0)+ISNULL(FREIGHT_IGST_AMOUNT,0)+ISNULL(FREIGHT_CGST_AMOUNT,0)+
+			 ISNULL(FREIGHT_SGST_AMOUNT,0)+ISNULL(FREIGHT_TAXABLE_VALUE,0) +ISNULL(INSURANCE_TAXABLE_VALUE,0)+
+			 ISNULL(INSURANCE_CGST_AMOUNT,0)+ISNULL(INSURANCE_SGST_AMOUNT,0)+ISNULL(INSURANCE_IGST_AMOUNT,0)
+			 +ROUND_OFF +B.NET_AMOUNT_GST+ISNULL(B.GST_CESS_AMOUNT,0) ))
+			FROM #tWsrMstTable A 
+			JOIN (SELECT SUM(XN_VALUE_WITHOUT_GST+IGST_AMOUNT+CGST_AMOUNT+SGST_AMOUNT+ISNULL(CESS_AMOUNT,0)) AS NET_AMOUNT_GST,
+			              SUM(ISNULL(GST_CESS_AMOUNT,0)) AS GST_CESS_AMOUNT
+				  FROM #tWsrDetTable A
+				  
+				 ) B ON 1=1
+		
+		set @cStep=194
+		   SET @cCmd=N' UPDATE a SET FREIGHT_HSN_CODE=b.FREIGHT_HSN_CODE,INSURANCE_HSN_CODE=b.INSURANCE_HSN_CODE,OTHER_CHARGES_HSN_CODE=b.OTHER_CHARGES_HSN_CODE,PARTY_STATE_CODE=b.PARTY_STATE_CODE,
+			DISCOUNT_AMOUNT=b.DISCOUNT_AMOUNT,
+			 TOTAL_QUANTITY_STR=b.TOTAL_QUANTITY_STR,SUBTOTAL=b.SUBTOTAL,TOTAL_QUANTITY=b.TOTAL_QUANTITY,
+			  Total_Gst_Amount=b.Total_Gst_Amount,MANUAL_DISCOUNT=b.MANUAL_DISCOUNT,DISCOUNT_PERCENTAGE=b.DISCOUNT_PERCENTAGE,
+			 round_off=b.round_off,OTHER_CHARGES_IGST_AMOUNT=b.OTHER_CHARGES_IGST_AMOUNT,
+			 INSURANCE_cGST_AMOUNT=b.INSURANCE_cGST_AMOUNT,INSURANCE_sGST_AMOUNT=b.INSURANCE_sGST_AMOUNT,INSURANCE_iGST_AMOUNT=b.INSURANCE_IGST_AMOUNT,
+			 OTHER_CHARGES_cGST_AMOUNT=b.OTHER_CHARGES_cGST_AMOUNT,OTHER_CHARGES_sGST_AMOUNT=b.OTHER_CHARGES_sGST_AMOUNT,
+			FREIGHT_IGST_AMOUNT=b.FREIGHT_IGST_AMOUNT,FREIGHT_cGST_AMOUNT=b.FREIGHT_cGST_AMOUNT,FREIGHT_sGST_AMOUNT=b.FREIGHT_sGST_AMOUNT,
+			GST_ROUND_OFF=b.GST_ROUND_OFF,total_amount=b.total_amount,OTHER_CHARGES_TAXABLE_VALUE=b.OTHER_CHARGES_TAXABLE_VALUE,
+			FREIGHT_TAXABLE_VALUE=b.FREIGHT_TAXABLE_VALUE,FREIGHT_GST_PERCENTAGE=b.FREIGHT_GST_PERCENTAGE,
+			other_charges_gst_percentage=b.other_charges_gst_percentage,
+			INSURANCE_TAXABLE_VALUE=b.INSURANCE_TAXABLE_VALUE,INSURANCE_GST_PERCENTAGE=b.INSURANCE_GST_PERCENTAGE,
+			TOTAL_GST_CESS_AMOUNT=B.TOTAL_GST_CESS_AMOUNT,
+			broker_tds_Amount=b.broker_tds_Amount,
+			broker_comm_amount=isnull(b.broker_tds_Amount,0)*isnull(a.broker_comm_percentage,0)/100
+			FROM '+@cMstTable+' A JOIN #tWsrMstTable b ON 1=1 WHERE '+@cWhereClause
+			
+			print @cCmd
+			EXEC SP_EXECUTESQL @cCmd
+		
+		set @cStep=196
+			SET @cCmd=N'UPDATE a SET hsn_code=b.hsn_code,GST_PERCENTAGE=b.GST_PERCENTAGE,igst_amount=b.igst_amount,cgst_amount=b.cgst_amount,
+			sgst_amount=b.sgst_amount,xn_value_without_gst=b.xn_value_without_gst,xn_value_with_gst=b.xn_value_with_gst,bill_level_tax_method=b.bill_level_tax_method,
+			CNMDISCOUNTAMOUNT=b.CNMDISCOUNTAMOUNT,item_tax_percentage=b.item_tax_percentage,item_tax_amount=b.item_tax_amount,discount_amount=b.discount_amount,
+			DISCOUNT_PERCENTAGE=b.DISCOUNT_PERCENTAGE,CESS_AMOUNT=b.CESS_AMOUNT,
+			gst_Cess_percentage=b.Gst_cess_percentage,
+			Gst_cess_amount=b.Gst_cess_Amount,
+			Rate=b.rate,
+			net_rate=b.net_rate,TAX_ROUND_OFF=B.TAX_ROUND_OFF
+			FROM  '+@cDetTable+' A JOIN #tWsrDetTable b ON a.row_id=b.row_id WHERE '+@cWhereClause
+			print @cCmd
+
+			EXEC SP_EXECUTESQL @cCmd
+
+			
+
+		
+	--if @@spid=94
+	--begin
+		--select 'chk tmst',subtotal,total_amount from #tWsrMstTable
+		--select 'chk tdet',product_code, * from #tWsrDetTable
+	--end
+
+
+END TRY
+
+BEGIN CATCH
+	print 'enter catch of sp3s_caltotals_wsr'
+	SET @CERRORMSG='Error in Procedure sp3s_caltotals_wsr at Step#'+@cStep+' '+ERROR_MESSAGE()
+	GOTO END_PROC
+END CATCH
+
+END_PROC:        
+   
+END

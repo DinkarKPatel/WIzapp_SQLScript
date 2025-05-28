@@ -1,0 +1,88 @@
+CREATE PROCEDURE SP3S_VALIDATA_PRT_STOCK
+(
+ @CTABLE_NAME VARCHAR(100)='',
+ @CUSER_CODE VARCHAR(10)='',
+ @CBIN_ID VARCHAR(10)='',
+ @CDEPT_ID VARCHAR(5)=''
+)
+AS
+BEGIN
+    
+    
+    DECLARE @DTSQL NVARCHAR(MAX)
+    
+    PRINT 'Step-1:'+convert(varchar,getdate(),113)
+    SET @DTSQL=N'UPDATE '+@CTABLE_NAME+' SET product_code=LEFT(PRODUCT_CODE, ISNULL(NULLIF(CHARINDEX (''@'',PRODUCT_CODE)-1,-1),LEN(PRODUCT_CODE )))'
+    PRINT @DTSQL
+    --EXEC SP_EXECUTESQL @DTSQL 
+	
+	PRINT 'Step-2:'+convert(varchar,getdate(),113)
+    IF OBJECT_ID('tempdb..#tmpPmt','u') IS NOT NULL
+		DROP TABLE #tmpPmt
+	
+	SELECT product_code,bin_id,quantity_in_stock INTO #tmppmt from pmt01106 where 1=2
+	
+	--SET @DTSQL =N'INSERT #tmppmt (product_code,bin_id,quantity_in_stock)
+	--			  SELECT LEFT(A.PRODUCT_CODE, ISNULL(NULLIF(CHARINDEX (''@'',A.PRODUCT_CODE)-1,-1),LEN(A.PRODUCT_CODE ))),
+	--			  A.bin_id,SUM(quantity_in_stock) AS quantity_in_stock FROM Pmt01106 a (NOLOCK)
+	--			  JOIN '+@CTABLE_NAME+' b ON LEFT(A.PRODUCT_CODE, ISNULL(NULLIF(CHARINDEX (''@'',A.PRODUCT_CODE)-1,-1),LEN(A.PRODUCT_CODE )))=b.product_code
+	--			  WHERE dept_id='''+ @CDEPT_ID+'''
+	--			  GROUP BY LEFT(A.PRODUCT_CODE, ISNULL(NULLIF(CHARINDEX (''@'',A.PRODUCT_CODE)-1,-1),LEN(A.PRODUCT_CODE ))),A.BIN_ID'
+SET @DTSQL =N'INSERT #tmppmt (product_code,bin_id,quantity_in_stock)
+				  SELECT A.PRODUCT_CODE,A.bin_id,SUM(quantity_in_stock) AS quantity_in_stock 
+				  FROM Pmt01106 a (NOLOCK)
+				  JOIN '+@CTABLE_NAME+' b ON A.PRODUCT_CODE=b.product_code
+				  WHERE dept_id='''+ @CDEPT_ID+'''
+				  GROUP BY A.PRODUCT_CODE,A.BIN_ID'
+
+	EXEC SP_EXECUTESQL @DTSQL 
+	
+	PRINT 'Step-3:'+convert(varchar,getdate(),113)		
+    SET @DTSQL =N' SELECT * FROM
+    (
+		SELECT A.BIN_ID,
+		a.PRODUCT_CODE , 
+		  A.QTY AS PASTE_QTY, 
+		 (CASE WHEN B.PRODUCT_CODE   IS NULL THEN ''BARRCODE NOT FOUND'' 
+			   WHEN C.BIN_ID IS NULL    THEN ''USER NOT AUTHORIZED TO USE BIN NO''+A.BIN_ID 
+			   WHEN A.QTY>QUANTITY_IN_STOCK THEN
+				''QUANTITY NOT IN STOCK'' ELSE '''' END) AS ERR_MSG 
+		FROM 
+		(select product_code,bin_id,sum(qty) as qty from '+@CTABLE_NAME+' GROUP BY product_code,bin_id) A
+		LEFT OUTER JOIN BINUSERS C (NOLOCK) ON C.BIN_ID=A.BIN_ID AND C.USER_CODE='''+@CUSER_CODE+'''
+		LEFT JOIN #tmppmt B ON A.PRODUCT_cODE=B.PRODUCT_CODE AND A.BIN_ID=B.BIN_ID
+		
+    ) A 
+    WHERE ISNULL(A.ERR_MSG,'''')<>'''''
+   
+   PRINT @DTSQL
+   EXEC SP_EXECUTESQL @DTSQL 
+    
+    
+  --  SELECT * FROM
+  --  (
+		--SELECT B.BIN_ID,A.PRODUCT_CODE, SUM(A.QTY) AS PASTE_QTY, 
+		-- (CASE WHEN B.PRODUCT_CODE   IS NULL THEN 'BARRCODE NOT FOUND' 
+		--	   WHEN c.BIN_ID IS NULL    THEN 'USER NOT AUTHORIZED TO USE BIN NO'+a.BIN_ID 
+		--	   WHEN SUM(A.QTY)>SUM(QUANTITY_IN_STOCK) THEN
+		--		'QUANTITY NOT IN STOCK' ELSE '' END) AS ERR_MSG 
+		--FROM ##TEMP_PCODE_100 A
+		--LEFT OUTER JOIN BINUSERS c (NOLOCK) ON c.BIN_ID=a.bin_id AND C.user_code=@CUSER_CODE
+		--LEFT JOIN
+		--(
+		--  SELECT LEFT(B.PRODUCT_CODE, ISNULL(NULLIF(CHARINDEX ('@',B.PRODUCT_CODE)-1,-1),LEN(B.PRODUCT_CODE )))  AS PRODUCT_CODE ,
+		--		 B.DEPT_ID,B.BIN_ID ,
+		--		 SUM(QUANTITY_IN_STOCK) AS QUANTITY_IN_STOCK
+		--  FROM PMT01106 B (NOLOCK)
+		--  WHERE B.DEPT_ID=@CDEPT_ID
+		--  GROUP BY LEFT(B.PRODUCT_CODE, ISNULL(NULLIF(CHARINDEX ('@',B.PRODUCT_CODE)-1,-1),LEN(B.PRODUCT_CODE )))  ,
+		--  B.DEPT_ID,B.BIN_ID
+	       
+		--) B ON A.PRODUCT_CODE=B.PRODUCT_CODE AND A.BIN_ID=B.BIN_ID 
+  --  ) A 
+  --  WHERE ISNULL(A.ERR_MSG,'')<>
+    
+    
+
+
+END

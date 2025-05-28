@@ -1,0 +1,118 @@
+CREATE PROCEDURE SP_SOR_DEBITNOTE_PRINT--(LocId 3 digit change by Sanjay:06-11-2024)
+(
+  @CMEMO_ID VARCHAR(50)='',
+  @CTABLENAME VARCHAR(100)=''
+)
+AS
+BEGIN
+   
+    DECLARE @DTSQL NVARCHAR(MAX)
+    
+    IF ISNULL(@CTABLENAME,'')=''
+    BEGIN
+    SELECT MST.MEMO_NO,MST.MEMO_ID,CONVERT(VARCHAR,MST.MEMO_DT,105) AS MEMO_DT,MST.FILTER,MST.AC_CODE ,LM.AC_NAME AS SUPPLIER,
+           MST.REMARKS,CONVERT(VARCHAR,MST.PERIOD_FROM,105) AS  PERIOD_FROM,CONVERT(VARCHAR,MST.PERIOD_TO,105) AS PERIOD_TO,
+           DET.PRODUCT_CODE,DET.CM_NO,DET.CM_NO,DET.CM_DT,DET.QUANTITY ,E.UOM_NAME ,
+           SKU.MRP ,sku.PURCHASE_PRICE ,DET.DISCOUNT_PERCENTAGE ,DET.DISCOUNT_AMOUNT ,
+           --DET.CMM_DISCOUNT_PERCENTAGE ,DET.CMM_DISCOUNT_AMOUNT ,
+		   DET.ITEM_NET ,
+           CONVERT(NUMERIC(10,2),(sku.MRP*DET.QUANTITY)) AS NET,'' as TERMS ,'' as GM_TYPE ,DET.GM_PER ,DET.NET_PAYABLE,
+           VAT_PER=0,VAT=0,ARTICLE_NO ,SD.SUB_SECTION_NAME ,SM.SECTION_NAME ,
+           PARA1_NAME ,PARA2_NAME ,PARA3_NAME ,PARA4_NAME ,PARA5_NAME ,PARA6_NAME ,B.ALIAS AS ARTICLE_ALIAS,
+           MST.MEMO_TYPE ,
+           CASE WHEN MST.MEMO_TYPE =1 THEN 'AGAINST EOSS OPENING STOCK'  ELSE 'AGAINST EOSS DOCUMENTS' END AS SOR_TYPE,
+           MST.CANCELLED,MST.VENDOR_AMOUNT,
+		   SL.DEPT_ID,SL.DEPT_NAME,SL.ADDRESS1,SL.ADDRESS2,SL.REGISTERED_ADD,SL.TIN_NO,SL.LOC_GST_NO,
+           SLA.AREA_NAME,SLA.PINCODE,SLC.CITY,SLS.GST_STATE_NAME,SL.PHONE,sl.Dept_Print_Name,
+		   det.scheme_discount ,det.card_discount_amount ,Det.output_gst ,det.input_gst ,
+		   det.claimed_base_value ,'' as discount_sharing_base_desc,Det.eoss_scheme_name ,
+		   st.sor_terms_name AS sor_terms_DESC,det.purchase_bill_dt ,CONVERT(VARCHAR,det.purCHASE_bill_dt,105) DISPLAY_purCHASE_bill_dt,
+		   (det.purchase_price*DET.quantity) AS PUR_VALUE,det.taxable_value ,det.gst_diff ,det.claimed_base_gm_value ,
+		   det.weighted_avg_disc_amt ,det.hsn_code,det.bill_remarks, det.rate_diff,det.rate_diff_gst_amount,
+		   det.rate_diff_gst_percentage,det.company_share_with_outputgst ,
+		   '' as ref_no,((det.purchase_price*quantity) +(det.input_gst)) As Invoice_Amount
+		
+
+    FROM EOSSSORM MST 
+    JOIN EOSSSORD DET ON MST.MEMO_ID =DET.MEMO_ID 
+    JOIN LM01106 LM (NOLOCK) ON LM.AC_CODE =MST.AC_CODE 
+    JOIN SKU  (NOLOCK) ON SKU.PRODUCT_CODE=DET.PRODUCT_CODE  
+	JOIN ARTICLE B  (NOLOCK) ON SKU.ARTICLE_CODE = B.ARTICLE_CODE      
+	JOIN SECTIOND SD  (NOLOCK) ON B.SUB_SECTION_CODE = SD.SUB_SECTION_CODE    
+	JOIN SECTIONM SM  (NOLOCK) ON SD.SECTION_CODE = SM.SECTION_CODE    
+	JOIN PARA1 C  (NOLOCK) ON SKU.PARA1_CODE = C.PARA1_CODE      
+	JOIN PARA2 D  (NOLOCK) ON SKU.PARA2_CODE = D.PARA2_CODE      
+	JOIN PARA3 F  (NOLOCK) ON SKU.PARA3_CODE = F.PARA3_CODE      
+	JOIN PARA4 G  (NOLOCK) ON SKU.PARA4_CODE = G.PARA4_CODE      
+	JOIN PARA5 H  (NOLOCK) ON SKU.PARA5_CODE = H.PARA5_CODE      
+	JOIN PARA6 I  (NOLOCK) ON SKU.PARA6_CODE = I.PARA6_CODE      
+	JOIN UOM E  (NOLOCK) ON B.UOM_CODE = E.UOM_CODE 
+	JOIN LOCATION SL (NOLOCK) ON SL.DEPT_ID =mst.location_Code
+	LEFT JOIN AREA SLA (NOLOCK) ON SL.AREA_CODE=SLA.AREA_CODE                  
+	LEFT JOIN CITY SLC (NOLOCK) ON SLA.CITY_CODE=SLC.CITY_CODE                  
+	LEFT JOIN GST_STATE_MST SLS (NOLOCK) ON SLS.GST_STATE_CODE=SL.GST_STATE_CODE
+	left join sor_terms_mst st (nolock) on st.sor_terms_code=det.sor_terms_code
+    WHERE MST.MEMO_ID=@CMEMO_ID
+
+
+	
+
+	SELECT  st.sor_terms_name AS sor_terms_DESC,SUM(taxable_value) taxable_value,SUM(taxable_value+output_gst) NRV,
+				(CASE WHEN SUM(taxable_value)<>0 THEN convert(numeric(6,2),ROUND((SUM(claimed_base_value*gm_per/100)/
+				SUM(taxable_value))*100 ,2)) ELSE 0 END) margin_pct_taxable,
+				gm_per,sum(claimed_base_value) claimed_base_value,
+				SUM(claimed_base_value*gm_per/100) claimed_base_gm_value,SUM(output_gst) output_gst,
+				SUM(input_gst) input_gst,SUM(input_gst-output_gst) net_gst,SUM(net_payable) net_payable,
+				(CASE WHEN SUM(taxable_value)<>0 THEN convert(numeric(6,2),
+				ROUND((SUM(claimed_base_value*gm_per/100)/SUM(taxable_value+output_gst))*100,2)) ELSE 0 END) final_margin_pct,
+				SUM(purchase_price*quantity) AS PUR_VALUE,1 as disp_order
+	FROM eosssord a (NOLOCK)
+	left join sor_terms_mst st (nolock) on st.sor_terms_code=a.sor_terms_code
+	where memo_id=@CMEMO_ID GROUP BY st.sor_terms_name,gm_per
+	
+	
+
+    END
+    ELSE
+    BEGIN
+     SET @DTSQL=N'IF OBJECT_ID('''+@CTABLENAME+''',''U'') IS NOT NULL
+                      DROP TABLE '+@CTABLENAME+''
+          PRINT @DTSQL
+		  EXEC SP_EXECUTESQL @DTSQL 
+		    
+      SET @DTSQL=N'SELECT MST.MEMO_NO,MST.MEMO_ID,CONVERT(VARCHAR,MST.MEMO_DT,105) AS MEMO_DT,MST.FILTER,MST.AC_CODE ,LM.AC_NAME AS SUPPLIER,
+					      MST.REMARKS,CONVERT(VARCHAR,MST.PERIOD_FROM,105) AS  PERIOD_FROM,CONVERT(VARCHAR,MST.PERIOD_TO,105) AS PERIOD_TO,
+					      DET.PRODUCT_CODE,DET.CM_NO,DET.CM_DT,DET.QUANTITY ,E.UOM_NAME ,
+					      DET.MRP ,DET.PURCHASE_PRICE ,DET.DISCOUNT_PERCENTAGE ,DET.DISCOUNT_AMOUNT ,
+					      --DET.CMM_DISCOUNT_PERCENTAGE ,DET.CMM_DISCOUNT_AMOUNT ,
+						  DET.ITEM_NET ,
+					      CONVERT(NUMERIC(10,2),(DET.MRP*DET.QUANTITY)) AS NET,DET.TERMS ,DET.GM_TYPE ,DET.GM_PER ,DET.NET_PAYABLE,
+					      VAT_PER=0,VAT=0,ARTICLE_NO ,SD.SUB_SECTION_NAME ,SM.SECTION_NAME ,
+					      PARA1_NAME ,PARA2_NAME ,PARA3_NAME ,PARA4_NAME ,PARA5_NAME ,PARA6_NAME ,
+					      B.ALIAS AS ARTICLE_ALIAS ,MST.MEMO_TYPE,
+					      CASE WHEN MST.MEMO_TYPE =1 THEN ''AGAINST EOSS DOCUMENTS''  ELSE ''AGAINST EOSS OPENING STOCK'' END AS SOR_TYPE,
+					      MST.CANCELLED,MST.VENDOR_AMOUNT    
+					    INTO '+@CTABLENAME+'
+					FROM EOSSSORM MST 
+					JOIN EOSSSORD DET ON MST.MEMO_ID =DET.MEMO_ID 
+					JOIN LM01106 LM (NOLOCK) ON LM.AC_CODE =MST.AC_CODE 
+					JOIN SKU  (NOLOCK) ON SKU.PRODUCT_CODE=DET.PRODUCT_CODE  
+					JOIN ARTICLE B  (NOLOCK) ON SKU.ARTICLE_CODE = B.ARTICLE_CODE      
+					JOIN SECTIOND SD  (NOLOCK) ON B.SUB_SECTION_CODE = SD.SUB_SECTION_CODE    
+					JOIN SECTIONM SM  (NOLOCK) ON SD.SECTION_CODE = SM.SECTION_CODE    
+					JOIN PARA1 C  (NOLOCK) ON SKU.PARA1_CODE = C.PARA1_CODE      
+					JOIN PARA2 D  (NOLOCK) ON SKU.PARA2_CODE = D.PARA2_CODE      
+					JOIN PARA3 F  (NOLOCK) ON SKU.PARA3_CODE = F.PARA3_CODE      
+					JOIN PARA4 G  (NOLOCK) ON SKU.PARA4_CODE = G.PARA4_CODE      
+					JOIN PARA5 H  (NOLOCK) ON SKU.PARA5_CODE = H.PARA5_CODE      
+					JOIN PARA6 I  (NOLOCK) ON SKU.PARA6_CODE = I.PARA6_CODE      
+					JOIN UOM E  (NOLOCK) ON B.UOM_CODE = E.UOM_CODE 
+					WHERE MST.MEMO_ID='''+@CMEMO_ID+''''
+		PRINT @DTSQL
+		EXEC SP_EXECUTESQL @DTSQL
+    
+    
+    END
+
+
+END

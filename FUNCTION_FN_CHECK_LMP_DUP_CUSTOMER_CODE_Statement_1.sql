@@ -1,0 +1,1 @@
+---- Code shifted to SPLIT_FN_CHECK_LMP_DUP_CUSTOMER_CODE (21-01-2019)

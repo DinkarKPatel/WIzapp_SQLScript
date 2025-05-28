@@ -1,0 +1,1 @@
+UPDATE wow_menu_auth SET auth_option_variable=isnull(auth_option_variable,'')

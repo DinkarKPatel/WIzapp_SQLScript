@@ -1,0 +1,25 @@
+CREATE PROCEDURE SP_RETAILSALE_9 -- (LocId 3 digit change by Sanjay:30-10-2024)
+(  
+	 @CQUERYID			NUMERIC(2),  
+	 @CWHERE			VARCHAR(MAX)='',  
+	 @CFINYEAR			VARCHAR(5)='',  
+	 @CDEPTID			VARCHAR(4)='',  
+	 @NNAVMODE			NUMERIC(2)=1,  
+	 @CWIZAPPUSERCODE	VARCHAR(10)='',  
+	 @CREFMEMOID		VARCHAR(40)='',  
+	 @CREFMEMODT		DATETIME='',  
+	 @BINCLUDEESTIMATE	BIT=1,  
+	 @CFROMDT			DATETIME='',  
+	 @CTODT				VARCHAR(50)='',
+	 @bCardDiscount		BIT=0,
+	 @cCustCode			VARCHAR(15)=''
+) 
+AS  
+BEGIN  
+        SELECT 1 AS SELECTED, CM_DT,CM_ID , CM_NO , 0 AS AMOUNT, REF_CM_ID   
+        FROM CMM01106  (NOLOCK)  
+        WHERE REF_CM_ID=@CWHERE  
+        AND CANCELLED = 0   
+        --AND COMPANY_CODE = '01'  
+
+end

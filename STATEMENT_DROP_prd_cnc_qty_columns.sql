@@ -1,0 +1,9 @@
+
+IF EXISTS (SELECT COLUMN_NAME from INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='JWR_MISSING_BARCODE_UPLOAD' AND COLUMN_NAME='cnc_qty')
+  alter table JWR_MISSING_BARCODE_UPLOAD drop column cnc_qty
+
+IF EXISTS (SELECT COLUMN_NAME from INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='jobwork_issue_mst' AND COLUMN_NAME='Item_Retrun')
+  alter table jobwork_issue_mst drop column Item_Retrun
+
+
+  

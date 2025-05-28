@@ -1,0 +1,2 @@
+--- START OF CREATING PROCEDURE - SP_MERGE_MIRROR_DOCPRT_DATA
+---- This Procedure is no longer in use

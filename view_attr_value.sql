@@ -1,0 +1,1 @@
+----- Dropped the View attr_value

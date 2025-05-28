@@ -1,0 +1,45 @@
+create PROCEDURE SP3S_GETMISSING_CMDT_KAPSONS
+(
+	@EndDate DATE
+)
+AS
+BEGIN
+
+   
+	SELECT CAST(REPLACE(IMPORT_FILE_NAME,'KAPSONS','') AS DATETIME) ERRORDATE,
+	IMPORT_FILE_NAME 
+	  INTO #TMPKAPSONSERROR 
+	FROM SLS_IMPORT_STATUS WHERE IMPORT_FILE_NAME LIKE 'KAPSONS%'  AND IMPORT_STATUS =2
+
+	DECLARE @StartDate DATE 
+	SET @StartDate = '2022-09-01'--, @EndDate = '2022-07-14'; 
+	;WITH ListDates(AllDates) 
+	AS
+	(    
+		SELECT @StartDate AS DATE
+		UNION ALL
+		SELECT DATEADD(DAY,1,AllDates)
+		FROM ListDates 
+		WHERE AllDates < @EndDate
+	)
+	,CMM_CMDT(CM_DT)
+	AS
+	(
+		SELECT CAST(CM_DT AS DATE) CM_DT 
+		FROM CMM01106 A
+		JOIN LOCATION B ON B.dept_id=A.location_code
+		left join #TMPKAPSONSERROR err on err.ERRORDATE =a.CM_DT 
+		WHERE dept_name like '%KAPSON%' AND CM_DT>=@StartDate
+		and err.ERRORDATE is null 
+		and a.cm_dt <=dateadd(day,-7,@EndDate)
+		GROUP BY CM_DT
+	)
+	SELECT DISTINCT AllDates, UPPER(REPLACE(CONVERT(VARCHAR(20),AllDates,106),' ','')) AS CM_DT
+	FROM ListDates a 
+	LEFT OUTER JOIN CMM_CMDT b ON B.CM_DT=a.AllDates
+	WHERE b.cm_dt is null
+	ORDER BY 1
+	option (maxrecursion 10000);
+END
+--GO
+-- EXEC SP3S_GETMISSING_CMDT_KAPSONS '2022-08-17'

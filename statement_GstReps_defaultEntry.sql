@@ -1,0 +1,15 @@
+
+truncate table GST_XN_ITEM_TYPE
+insert into GST_XN_ITEM_TYPE(xn_item_type,xn_item_type_name)
+SELECT 0 AS XN_ITEM_TYPE,'INV' Union all
+SELECT 1 AS XN_ITEM_TYPE,'INV' Union all
+SELECT 2 AS XN_ITEM_TYPE,'CONS' Union all
+SELECT 3 AS XN_ITEM_TYPE,'ASSESTS' Union all
+SELECT 4 AS XN_ITEM_TYPE,'SERVICE' Union all
+SELECT 5 AS XN_ITEM_TYPE,'Repair'
+
+truncate table GST_REGISTERED
+insert into GST_REGISTERED(REGISTERED_GST,REGISTERED_GST_NAMES)
+SELECT 0 AS REGISTERED_GST,'UnRegistered' Union all
+SELECT 1 AS REGISTERED_GST,'Registered' Union all
+SELECT 2 AS REGISTERED_GST,'Composite' 

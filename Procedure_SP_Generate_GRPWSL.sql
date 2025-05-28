@@ -1,0 +1,339 @@
+create PROCEDURE SP_Generate_GRPWSL 
+(   
+	 @CMEMOID   VARCHAR(40)='',
+	 @CLOCID VARCHAR(4)='',
+	 @CRETRUNID varchar(50) output,
+	 @cErrormsg varchar(1000) output,
+	 @CPS_ID varchar(25)='',
+	 @DONOTCALLEDFROMGIT bit=0,
+	 @cUser_code varchar(7)='0000000'
+)  
+----WITH ENCRYPTION
+AS  
+--(dinkar) Replace  left(memoid,2) to Location_code 
+BEGIN  
+/*
+	THIS PROCEDURES SAVES DATA IN inm01106 TABLE FROM TEMPORARY TABLE.
+	THE TEMPERORY TABLE WILL HAVE NO ITEM DETAILS.when at the time of Goods 
+	Receive In Git Bin Use Want to return box at the time of Receiving Goosd in Git Bin 
+	and also user Generate debit note of item at the time of bin transfer from git bin to actual bin
+*/
+  
+ DECLARE   @CMASTERTABLENAME  VARCHAR(100), @CDETAILTABLENAME  VARCHAR(100),   
+		   @CTEMPMASTERTABLE  VARCHAR(100), @CTEMPDETAILTABLE  VARCHAR(100),  
+		   @CKEYFIELDVAL1   VARCHAR(50), @CKEYFIELD1    VARCHAR(50), @CMEMONO    VARCHAR(20),  
+		   @NMEMONOLEN    NUMERIC(20,0), @CMEMONOVAL    VARCHAR(50),  
+		   @CCMD     NVARCHAR(4000),@CCMDOUTPUT    NVARCHAR(4000),  
+		   @NSAVETRANLOOP   BIT,@NSTEP  VARCHAR(10),
+		   @nUpdatemode int, @CDEPT_ID varchar(4),@nSpId VARCHAR(50),@CFINYEAR varchar(10),
+		   @CMEMONOPREFIX varchar(10),@cDeptAcCode varchar(15),@bAC_GST_NO varchar(15),
+		   @cprtyStatecode varchar(2),@NEXCLTAX numeric(10,2),@NGSTCESSAMOUNT numeric(10,2),
+		   @CXNTYPEPARA varchar(10),@CTARGETLOCID varchar(2),@CMEMOPREFIXPROC varchar(20),
+		   @CKEYFIELD varchar(20),@CFILTERCONDITION varchar(100),@CJOINSTR varchar(max),
+		   @NLOCREGISTER bit  ,@ntotalGitQTY numeric(10,3),@ntotalReturnQTY numeric(10,3),
+		   @NMODE INT,@CGENCHALLANLIKESERIES varchar(2),@CPRIFIX VARCHAR(10),@BPREFIXLZEROS	BIT
+		   
+		   
+		
+  SET @nSpId=NEWID()		   
+  SET @nUpdatemode=1
+
+  SET @NSTEP = '5'  -- SETTTING UP ENVIRONMENT  
+   
+ SET @CMASTERTABLENAME = 'WPS_MST'  
+ SET @CDETAILTABLENAME='WPS_DET'
+  
+ SET @CTEMPMASTERTABLE = 'WPS_'+@CMASTERTABLENAME+'_UPLOAD'
+ SET @CTEMPDETAILTABLE=  'WPS_'+@CDETAILTABLENAME+'_UPLOAD'
+ 
+  
+ SET @cErrormsg   = ''  
+ SET @CKEYFIELD1   = 'PS_ID'  
+  
+  SET @NSTEP = '10'
+ SET @CMEMONO   = 'PS_NO'  
+ 
+ 
+ SELECT @CGENCHALLANLIKESERIES = [VALUE] FROM CONFIG (NOLOCK) WHERE CONFIG_OPTION = 'GENERATE_CHALLAN_SERIES'
+ SET @CGENCHALLANLIKESERIES=ISNULL(@CGENCHALLANLIKESERIES,'')
+ 
+ SELECT @CPRIFIX = [VALUE]  FROM CONFIG (NOLOCK) WHERE CONFIG_OPTION = 'WPS_RETAIN_W8_SERIES'
+
+ set @CDEPT_ID =@clocid
+	
+ SET @NSTEP = '12'
+ 
+ BEGIN TRY  
+    
+    if ISNULL(@CPS_ID,'')=''
+    begin
+         SET @cErrormsg = 'blank packslip can not be savd'  
+		 GOTO END_PROC  
+    
+    end
+    
+    
+     if ISNULL(@CDEPT_ID,'')=''
+    begin
+         SET @cErrormsg = 'Location Code can not be blank'  
+		 GOTO END_PROC  
+    
+    end
+ 
+   SELECT @CFINYEAR='01'+ DBO.FN_GETFINYEAR(getdate() )
+   
+   SET @CMEMONOPREFIX=''
+   SET @NMEMONOLEN			= 10
+   set @BPREFIXLZEROS=0
+   
+   DELETE A FROM Wps_wps_mst_UPLOAD  A (NOLOCK) WHERE SP_ID=@NSPID
+   
+     DECLARE @source_loc VARCHAR(4), @cagainstpsno varchar(max),@cgainstinvno varchar(max),@cagainstTransfer varchar(100),@cremarks varchar(1000)
+   
+   select @cgainstinvno=INV_NO +' DT: '+CONVERT(varchar(10),inv_dt,121),@source_loc=challan_source_location_code   from pim01106  a (nolock) where a.INV_ID=@CMEMOID and CANCELLED =0
+   
+   SELECT @cDeptAcCode=A.DEPT_AC_CODE ,@bAC_GST_NO=B.AC_GST_NO ,@cprtyStatecode=b.ac_gst_state_code 
+   FROM   LOCATION A (NOLOCK) 
+   JOIN LMP01106 B (NOLOCK) ON A.DEPT_AC_CODE =B.AC_CODE 
+   WHERE  A.DEPT_ID =@source_loc
+   
+   
+   select @cagainstpsno=QUOTENAME(SUBSTRING(RIGHT(@CPS_ID,LEN(@CPS_ID)-LEN(@source_loc)+5),CHARINDEX(LEFT(@CPS_ID,LEN(@source_loc)), RIGHT(@CPS_ID,LEN(@CPS_ID)-LEN(@source_loc)+5)),LEN(@source_loc)+13) )
+   select @cagainstTransfer=MEMO_NO  +' DT: '+CONVERT(varchar(10),MEMO_DT ,121) from FLOOR_ST_MST (nolock) where CANCELLED =0 and PS_ID=@CPS_ID
+   
+   set @cremarks='CHO Against:('+@cgainstinvno+'),psno:('+@cagainstpsno+')'
+   
+   IF ISNULL(@CAGAINSTTRANSFER,'')<>''
+       SET @CREMARKS=@CREMARKS+',TRANSFER MEMO('+@CAGAINSTTRANSFER+')'
+   
+
+
+   INSERT INTO WPS_WPS_MST_UPLOAD(PS_NO,ps_id,ps_dt ,fin_year, ps_mode ,ac_code  ,memo_type  ,bin_id ,TARGET_BIN_ID , 
+               SP_ID,party_dept_id ,XN_ITEM_TYPE,user_code ,edt_user_code  ,REMARKS ,GITBIN_INV_ID,entry_mode,GITBIN_PS_ID,location_Code  )
+                
+    SELECT 'LATER' PS_NO,'LATER' ps_id,CONVERT(VARCHAR(10),GETDATE(),121) ps_dt,@CFINYEAR FIN_YEAR,2 ps_mode ,@cDeptAcCode  AC_CODE  ,1 AS MEMO_TYPE,'888' AS BIN_ID, 
+           '000' AS TARGET_BIN_ID,@NSPID SP_ID  ,@source_loc AS PARTY_DEPT_ID,1 as XN_ITEM_TYPE,
+           @cUser_code as User_code,'0000000' edt_user_code,@CREMARKS as REMARKS,
+           @CMEMOID as GITBIN_INV_ID,2 as entry_mode ,@CPS_ID GITBIN_PS_ID,@CDEPT_ID as Location_code
+           
+           
+  
+		SET @NSTEP = 15
+		
+		SET @NMODE=2
+		set @CTARGETLOCID=@source_loc
+		
+		set @CMEMONOPREFIX=@CDEPT_ID+'-'
+
+		IF @CGENCHALLANLIKESERIES='1' AND @NMODE=2
+		BEGIN
+			SELECT @CMEMONOPREFIX = @CDEPT_ID+@CTARGETLOCID+'-',@BPREFIXLZEROS=1
+		END
+		ELSE
+		IF (@CPRIFIX='1')
+		BEGIN
+			SET @CMEMONOPREFIX = RTRIM(LTRIM(@CDEPT_ID))+'S-'
+		END	
+
+
+   
+   -- GENERATING NEW JOB ORDER NO    
+   SET @NSAVETRANLOOP=0  
+   WHILE @NSAVETRANLOOP=0  
+   BEGIN  
+   
+		SET @NSTEP = '25'
+		EXEC GETNEXTKEY @CMASTERTABLENAME, @CMEMONO, @NMEMONOLEN, @CMEMONOPREFIX,@BPREFIXLZEROS,
+							@CFINYEAR,0, @CMEMONOVAL OUTPUT   
+			 
+		SET @NSTEP = '35'  
+		PRINT '96 '+@CMEMONOVAL  
+		SET @CCMD=N'IF EXISTS ( SELECT '+@CMEMONO+' FROM '+@CMASTERTABLENAME+'   
+								WHERE '+@CMEMONO+'='''+@CMEMONOVAL+'''   
+								AND FIN_YEAR = '''+@CFINYEAR+''' )  
+					SET @NLOOPOUTPUT=0  
+				   ELSE  
+					SET @NLOOPOUTPUT=1'  
+		PRINT @CCMD  
+		EXEC SP_EXECUTESQL @CCMD, N'@NLOOPOUTPUT BIT OUTPUT',@NLOOPOUTPUT=@NSAVETRANLOOP OUTPUT  
+   END  
+  
+   SET @NSTEP = '45'
+   IF @CMEMONOVAL IS NULL OR @CMEMONOVAL LIKE '%LATER%'
+   BEGIN  
+      SET @cErrormsg = 'STEP- ' + LTRIM(STR(@NSTEP)) + ' ERROR CREATING NEXT MEMO NO....'   
+      GOTO END_PROC      
+   END  
+   
+
+		   SET @NSTEP = '100'  
+		   
+		   SET @CKEYFIELDVAL1 = @CDEPT_ID + @CFINYEAR+REPLICATE('0', (22-LEN(@CDEPT_ID + @CFINYEAR))-LEN(LTRIM(RTRIM(@CMEMONOVAL))))  + LTRIM(RTRIM(@CMEMONOVAL))
+		   
+		   IF @CKEYFIELDVAL1 IS NULL OR @CKEYFIELDVAL1 LIKE '%LATER%'    
+		   BEGIN  
+			  SET @cErrormsg = 'STEP- ' + LTRIM(STR(@NSTEP)) + ' ERROR CREATING NEXT MEMO ID....'  
+			  GOTO END_PROC  
+		   END  
+
+		  PRINT '121 ID='+@CKEYFIELDVAL1+'; NO='+@CMEMONOVAL
+		   SET @NSTEP = 40  -- UPDATING NEW ID INTO TEMP TABLES  
+		   SET @CCMD = 'UPDATE ' + @CTEMPMASTERTABLE + ' SET ' +@CMEMONO+'=''' + @CMEMONOVAL+''',' 
+								 +@CKEYFIELD1+' = '''+@CKEYFIELDVAL1+'''
+								 WHERE SP_ID ='''+LTRIM(RTRIM(@NSPID))+''' '  
+		   PRINT @CCMD  
+		   EXEC SP_EXECUTESQL @CCMD  
+		  SET @NSTEP = '105'
+		  -- RECHECKING IF ID IS STILL LATER  
+		  IF @CKEYFIELDVAL1 IS NULL OR @CKEYFIELDVAL1 LIKE '%LATER%'  
+		  BEGIN  
+			 SET @cErrormsg = 'STEP- ' + LTRIM(STR(@NSTEP)) + ' ERROR CREATING NEXT MEMO ID....'  
+			 GOTO END_PROC  
+		  END
+
+		SET @NSTEP = '125'
+		DELETE A FROM WPS_WPS_DET_UPLOAD  A (NOLOCK) WHERE SP_ID=@NSPID
+		
+	if @DONOTCALLEDFROMGIT=0
+	begin
+		
+		
+		--SET @CKEYFIELD='ROW_ID'
+		--SET @CFILTERCONDITION=' b.INV_ID='''+@CMEMOID+'''  and ISNULL(GIT_RECEIVED,0)=0'
+		--set @CJOINSTR=' JOIN DOCWSL_XNRECON_GITBIN_UPLOAD C (NOLOCK) ON C.PS_ID  =B.PS_ID AND B.INV_ID =C.INV_ID '
+		
+		
+		 INSERT WPS_WPS_DET_UPLOAD	( BIN_ID, BO_DET_ROW_ID, BOX_DT, BOX_ID, BOX_NO, CGST_AMOUNT, DEPT_ID, EMP_CODE, EMP_CODE1, EMP_CODE2, GST_PERCENTAGE, HSN_CODE, IGST_AMOUNT, ITEM_FORM_ID, LAST_UPDATE, MRP, ORDER_ID, PACKSLIP_ARTICLE_CODE, PACKSLIP_PARA1_CODE, PACKSLIP_PARA2_CODE, PICK_LIST_ROW_ID, 
+		        PRODUCT_CODE, PS_ID, QUANTITY, RATE, REF_WO_DET_ROW_ID, REMARKS, ROW_ID, SGST_AMOUNT, SP_ID, SRNO, TAX_AMOUNT, TAX_PERCENTAGE, WS_PRICE, XN_VALUE_WITH_GST, XN_VALUE_WITHOUT_GST, XNITEMWEIGHT )  
+		        
+		 SELECT 	  BIN_ID, BO_DET_ROW_ID, BOX_DT, BOX_ID, BOX_NO, CGST_AMOUNT, DEPT_ID, EMP_CODE, EMP_CODE1, EMP_CODE2, GST_PERCENTAGE, HSN_CODE, IGST_AMOUNT, ITEM_FORM_ID, LAST_UPDATE, MRP, ORDER_ID, 
+		              NULL PACKSLIP_ARTICLE_CODE,NULL PACKSLIP_PARA1_CODE,NULL PACKSLIP_PARA2_CODE, PICK_LIST_ROW_ID, PRODUCT_CODE, 
+		              'LATER' PS_ID, QUANTITY, RATE,'' REF_WO_DET_ROW_ID, REMARKS, ROW_ID, SGST_AMOUNT,@NSPID SP_ID, 0 SRNO,0 TAX_AMOUNT,0 TAX_PERCENTAGE, 
+		              WS_PRICE,B. XN_VALUE_WITH_GST,B. XN_VALUE_WITHOUT_GST,0 XNITEMWEIGHT 
+		 FROM DOCWSL_IND01106_MIRROR B (NOLOCK)
+		 JOIN DOCWSL_XNRECON_GITBIN_UPLOAD C (NOLOCK) ON C.PS_ID  =B.PS_ID AND B.INV_ID =C.INV_ID
+         WHERE B.INV_ID=@CMEMOID AND ISNULL(GIT_RECEIVED,0)=0 and b.ps_id=@CPS_ID
+		
+	
+		
+	
+         select @ntotalGitQTY=SUM(GIT_QTY) FROM DOCWSL_XNRECON_GITBIN_UPLOAD (nolock) WHERE INV_ID=@CMEMOID and ISNULL(GIT_RECEIVED,0)=0 and ps_id=@CPS_ID
+        end
+		else 
+		begin
+		    
+		    SET @NSTEP = '160'
+		    
+		    INSERT WPS_WPS_DET_UPLOAD	( BIN_ID, BO_DET_ROW_ID, BOX_DT, BOX_ID, BOX_NO, CGST_AMOUNT, DEPT_ID, EMP_CODE, EMP_CODE1, EMP_CODE2, GST_PERCENTAGE, HSN_CODE, IGST_AMOUNT, 
+		        ITEM_FORM_ID, LAST_UPDATE, MRP, ORDER_ID, PACKSLIP_ARTICLE_CODE, PACKSLIP_PARA1_CODE, PACKSLIP_PARA2_CODE, PICK_LIST_ROW_ID,PRODUCT_CODE, PS_ID, QUANTITY, RATE, 
+		        REF_WO_DET_ROW_ID, REMARKS,  SGST_AMOUNT, SP_ID, SRNO, TAX_AMOUNT, TAX_PERCENTAGE, WS_PRICE, XN_VALUE_WITH_GST, XN_VALUE_WITHOUT_GST, XNITEMWEIGHT )  
+		       
+		     SELECT DISTINCT a.BIN_ID,'' BO_DET_ROW_ID,'' BOX_DT, BOX_ID, BOX_NO,((a.CGST_AMOUNT /a.quantity)*c.Quantity) CGST_AMOUNT, DEPT_ID,'0000000' EMP_CODE,'0000000' EMP_CODE1,'0000000' EMP_CODE2, GST_PERCENTAGE, HSN_CODE, 
+		        ((a.IGST_AMOUNT /a.quantity)*c.Quantity)   IGST_AMOUNT, '0000000' ITEM_FORM_ID,GETDATE() LAST_UPDATE, MRP,'' ORDER_ID,null PACKSLIP_ARTICLE_CODE,null PACKSLIP_PARA1_CODE,null PACKSLIP_PARA2_CODE,'' PICK_LIST_ROW_ID, 
+		        c.PRODUCT_CODE,'LATER' PS_ID,c.Quantity QUANTITY,a.GROSS_PURCHASE_PRICE RATE,'' REF_WO_DET_ROW_ID,'CHO from GIT' REMARKS,--CONVERT(VARCHAR(40),NEWID()) ROW_ID, 
+		        ((a.SGST_AMOUNT /a.quantity)*c.Quantity) SGST_AMOUNT,@NSPID SP_ID, SRNO,0 TAX_AMOUNT,0 TAX_PERCENTAGE,a.WHOLESALE_PRICE WS_PRICE,
+		        ((a.XN_VALUE_WITH_GST /a.quantity)*c.Quantity) XN_VALUE_WITH_GST,((a.XN_VALUE_WITHOUT_GST /a.quantity)*c.Quantity) XN_VALUE_WITHOUT_GST,0 XNITEMWEIGHT 	 
+		     
+		     FROM pid01106 A
+		     join pim01106 b on a.mrr_id =b.mrr_id 
+		     join XNS_GITBINITEM_UPLOAD c (nolock) on c.PS_ID  =a.PS_ID and b.inv_id =c.INV_ID and a.product_code =C.product_code
+		     where b.CANCELLED =0 and b.inv_id=@CMEMOID and a.ps_id=@CPS_ID
+		     
+				UPDATE WPS_WPS_DET_UPLOAD SET ROW_ID=CONVERT(VARCHAR(40),NEWID()) WHERE SP_ID=@NSPID
+
+             select @ntotalGitQTY=SUM(Quantity) FROM XNS_GITBINITEM_UPLOAD a (nolock) WHERE INV_ID=@CMEMOID  and a.ps_id=@CPS_ID
+	
+		end
+		
+		UPDATE A SET ps_id=@CKEYFIELDVAL1,ROW_ID =CONVERT(VARCHAR(40),NEWID()) ,REMARKS='CHO FROM GIT',bin_id='888'
+		FROM  WPS_wps_det_UPLOAD  A (NOLOCK) WHERE SP_ID=@NSPID
+	 	
+	 	
+		SET @NSTEP = '170'
+		
+		UPDATE A SET SUBTOTAL = ISNULL(B.SUBTOTAL,0),
+		             TOTAL_QUANTITY=ISNULL(B.INVOICE_QUANTITY,0)
+		            
+		FROM WPS_WPS_MST_UPLOAD  A 
+		LEFT OUTER JOIN
+		( 	
+			SELECT	SUM((CONVERT(NUMERIC(18,4),ws_price )*QUANTITY )) AS SUBTOTAL, 
+			        SUM(QUANTITY) AS INVOICE_QUANTITY
+			FROM WPS_WPS_det_UPLOAD (nolock)
+			where SP_ID=@NSPID
+		) B ON  1=1
+		where a.SP_ID=@NSPID
+		
+			SET @NSTEP = '172'
+         --Stock reduce In Pmt 
+		 Update a set quantity_in_stock =quantity_in_stock-b.quantity  
+		 from pmt01106 A (nolock)
+		 join wps_wps_det_UPLOAD b (nolock) on a.BIN_ID  =b.BIN_ID and a.product_code =b.product_code 
+		 where a.dept_id=@CLOCID and isnull(a.bo_order_id ,'')=''
+		 and b.SP_ID =@NSPID
+		
+	 
+   
+		 DECLARE @CWHERECLAUSE VARCHAR(100)
+		 SET @CWHERECLAUSE = ' SP_ID='''+LTRIM(RTRIM(@NSPID))+''''
+    
+		  SET @NSTEP = '175' -- UPDATING MASTER TABLE  
+		  EXEC UPDATEMASTERXN_MIRROR 
+		       @CSOURCEDB='',
+		       @CSOURCETABLE=@CTEMPMASTERTABLE,
+		       @CDESTDB='',        
+			   @CDESTTABLE=@CMASTERTABLENAME,
+			   @CKEYFIELD1=@CKEYFIELD1,       
+			   @LINSERTONLY=1,@BUPDATEXNS=1,
+			   @BALWAYSUPDATE=1,
+			   @CFILTERCONDITION=@CWHERECLAUSE
+  
+ 
+	     SET @NSTEP = '185'
+	    
+	 
+	    
+		  EXEC UPDATEMASTERXN_MIRROR 
+		       @CSOURCEDB='',
+		       @CSOURCETABLE=@CTEMPDETAILTABLE,
+		       @CDESTDB='',        
+			   @CDESTTABLE=@CDETAILTABLENAME,
+			   @CKEYFIELD1=@CKEYFIELD1,       
+			   @LINSERTONLY=1,
+			   @BUPDATEXNS=1,
+			   @BALWAYSUPDATE=1,
+			   @CFILTERCONDITION=@CWHERECLAUSE
+		 SET @NSTEP=280
+		 
+       
+		 select @ntotalReturnQTY=SUM(Quantity ) FROM WPS_DET  (nolock) WHERE PS_ID=@CKEYFIELDVAL1 
+		 
+		 SET @CRETRUNID=@CKEYFIELDVAL1
+		 
+		 IF ISNULL(@NTOTALGITQTY,0)<>ISNULL(@NTOTALRETURNQTY,0)
+		 BEGIN
+		     SET @CERRORMSG ='ERROR IN GOODS RETURN PLEASE CHECK'
+		     GOTO END_PROC	
+		 END
+		 
+		  Update a set HO_SYNCH_LAST_UPDATE ='',LAST_UPDATE =GETDATE() from   wps_mst  A (nolock) where ps_id=@CKEYFIELDVAL1
+		 
+		
+	GOTO END_PROC	
+ END TRY  
+ BEGIN CATCH
+	print 'enter catch'
+    SET @cErrormsg = 'Error in Procedure SP_Generate_GRPWSL at STEP# ' + @NSTEP +  ' ' + ERROR_MESSAGE()
+	GOTO END_PROC
+ END CATCH 
+   
+END_PROC:  
+	
+
+	DELETE FROM Wps_wps_mst_UPLOAD  WITH (ROWLOCK) WHERE SP_ID =LTRIM(RTRIM(@NSPID)) 
+	DELETE FROM Wps_wps_det_UPLOAD WITH (ROWLOCK) WHERE SP_ID =LTRIM(RTRIM(@NSPID)) 
+			
+				
+
+END        
+---------- END OF PROCEDURE SAVETRAN_PUR_DIFF_PRT

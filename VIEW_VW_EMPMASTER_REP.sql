@@ -1,0 +1,83 @@
+CREATE VIEW VW_EMPMASTER_REP 
+--WITH ENCRYPTION 
+AS
+SELECT          
+   T1.REF_ID   AS MST_EMP_ID,                   
+   T1.EMP_FNAME+' '+T1.EMP_LNAME  AS MST_EMPLOYEE_NAME,     
+   T1.PARENT_NAME  AS MST_PARENT_NAME,                
+   CONVERT(VARCHAR(10),T1.DATE_OF_BIRTH,105) AS MST_DATE_OF_BIRTH,                                          
+   T1.DATE_OF_JOINING AS MST_XN_DT,   
+   T9.DEPARTMENT_NAME AS MST_DEPARTMENT,                   
+   T10.DESIG_NAME  AS MST_DESIGNATION, 
+   T8.SHIFT_NAME AS MST_SHIFT_NAME ,            
+   T12.DEPT_NAME AS MST_LOCATION,
+   T12.DEPT_ALIAS AS MST_LOCATION_ALIAS,
+   T1.WEEKLY_OFF1  AS MST_WEEKLY_OFF1,                   
+   T1.WEEKLY_OFF2  AS MST_WEEKLY_OFF2,                 
+   T1.EMAIL1   AS MST_EMAIL1,                   
+   T1.EMAIL2   AS MST_EMAIL2,                              
+   T1.PHONES_H  AS MST_PHONES_H,                  
+   T1.MOBILE1   AS MST_MOBILE1,        
+   (CASE                   
+	WHEN ID_PROOF_DOC_TYPE = 1 THEN 'DRIVING-LICENCE'                   
+	WHEN ID_PROOF_DOC_TYPE = 2 THEN 'PASS-PORT'                   
+	WHEN ID_PROOF_DOC_TYPE = 3 THEN 'VOTER-ID-CARD'                   
+	WHEN ID_PROOF_DOC_TYPE = 0 THEN ''                   
+	WHEN ID_PROOF_DOC_TYPE = 4 THEN ID_PROOF_DOC_VALUE
+   END) AS MST_ID_PROOF_DOC_TYPE,              
+   T1.ID_PROOF_ISSUING_AUTHORITY AS MST_ID_PROOF_ISSUING_AUTHORITY,                  
+   T1.ID_PROOF_DOC_NO AS MST_ID_PROOF_DOC_NO,                     
+   T1.PAN_NO   AS MST_PAN_NO,                  
+   (CASE 
+	WHEN T1.MODE_OF_PAYMENT=0 THEN 'CHECQUE' 
+	WHEN T1.MODE_OF_PAYMENT=1 THEN 'SELF CHEQUE' 
+	WHEN T1.MODE_OF_PAYMENT=3 THEN 'CASH'
+	ELSE 'BANK'
+   END) AS MST_MODE_OF_PAYMENT,                  
+   T1.ADDRESS1  AS MST_ADDRESS1,                  
+   T1.ADDRESS2  AS MST_ADDRESS2,                  
+   T2.AREA_NAME  AS MST_AREA_NAME,                  
+   T3.CITY   AS MST_CITY,                  
+   T4.STATE   AS MST_STATE,                              
+   T2.PINCODE   AS MST_PINCODE,                      
+   T1.MAILING_ADDRESS1   AS MST_MAILING_ADDRESS1,                   
+   T1.MAILING_ADDRESS2   AS MST_MAILING_ADDRESS2,                      
+   T5.AREA_NAME  AS MST_MAILING_AREA_NAME,                  
+   T6.CITY   AS MST_MAILING_CITY,                  
+   T7.STATE   AS MST_MAILING_STATE,                        
+   T5.PINCODE   AS MST_MAILING_PINCODE,               
+   T1.BASIC_SALARY AS CAL_BASIC_SALARY,                  
+   (CASE                   
+	WHEN T1.EMP_TYPE = 0 THEN 'MALE'                   
+	WHEN T1.EMP_TYPE = 1 THEN 'FEMALE'                   
+	WHEN T1.EMP_TYPE = 2 THEN 'SENIOR-CITIZEN'                   
+	WHEN T1.EMP_TYPE = 3 THEN 'HANDICAPPED'                   
+	ELSE 'N.R.I.'
+   END) AS MST_EMP_TYPE,                 
+   (CASE                   
+	WHEN T1.EMP_STATUS = 0 THEN 'ACTIVE'                   
+	WHEN T1.EMP_STATUS = 1 THEN 'INACTIVE'                   
+	ELSE 'LEFT'                   
+   END) AS MST_EMP_STATUS,
+   CASE 
+	WHEN T1.PF_ENABLED=1 THEN 'YES' 
+	ELSE 'NO' 
+   END AS MST_PF_ENABLED,
+   CASE 
+	WHEN T1.ESI_ENABLED=1 THEN 'YES' 
+	ELSE 'NO' 
+   END  AS MST_ESI_ENABLED,
+   T1.CO_ALIAS AS MST_CO_ALIAS,
+   (CASE WHEN T1.EMP_STATUS = 2 THEN CONVERT(VARCHAR,T1.LEAVING_DATE,105) ELSE '' END) AS MST_LEAVING_DATE,
+   T1.BANK_ACC_NO AS MST_BANK_AC_NO
+ FROM EMP_MST T1                              
+ JOIN AREA T2   (NOLOCK) ON T1.AREA_CODE = T2.AREA_CODE                              
+ JOIN CITY T3   (NOLOCK) ON T2.CITY_CODE = T3.CITY_CODE                              
+ JOIN STATE T4   (NOLOCK) ON T3.STATE_CODE = T4.STATE_CODE                        
+ JOIN AREA T5   (NOLOCK) ON T5.AREA_CODE = T1.MAILING_AREA_CODE                        
+ JOIN CITY T6   (NOLOCK) ON T6.CITY_CODE = T5.CITY_CODE                        
+ JOIN STATE T7   (NOLOCK) ON T6.STATE_CODE = T7.STATE_CODE                    
+ JOIN EMP_SHIFTS T8  (NOLOCK) ON T1.SHIFT_ID = T8.SHIFT_ID                    
+ JOIN EMP_DEPARTMENT T9 (NOLOCK) ON T9.DEPARTMENT_ID = T1.DEPARTMENT_ID                    
+ JOIN EMP_DESIG T10  (NOLOCK) ON T10.DESIG_ID = T1.DESIG_ID                     
+ JOIN LOCATION T12 ON T1.DEPT_ID=T12.DEPT_ID

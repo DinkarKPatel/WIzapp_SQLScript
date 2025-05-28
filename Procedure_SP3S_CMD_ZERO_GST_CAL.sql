@@ -1,0 +1,132 @@
+CREATE PROCEDURE SP3S_CMD_ZERO_GST_CAL--(LocId 3 digit change by Sanjay:04-11-2024)
+(
+@CMEMOID varchar(50),
+@CERRORMSG VARCHAR(MAX) OUTPUT 
+)
+as
+begin
+
+
+		---REPROCESS GST CALCULATION IF GST PERCENTAGE IS ZERO
+
+		 DECLARE @BREGISTERED_DELEER int ,@CPARTY_GSTN_NO varchar(50),@CLOC_GSTN_NO varchar(100),@bExportInvoice bit,
+			        @CFC_CODE varchar(20),@CALL_XN_IGST varchar(20),@GST_DEPT_ID_FILTER varchar(10),@DCMDT datetime,
+					@NSPID varchar(40),@CPARTYSTATECODE VARCHAR(10),@CLOCATIONID VARCHAR(4) 
+			 
+			   set @CERRORMSG=''
+			   set @NSPID=newid()
+		
+		SELECT TOP 1 @CLOCATIONID=location_code FROM  cmm01106 (NOLOCK) WHERE cm_id=@CMEMOID
+
+			  SELECT TOP 1 @CALL_XN_IGST=VALUE  FROM CONFIG WHERE CONFIG_OPTION ='ALL_XN_IGST' 
+			
+			 SELECT @CLOC_GSTN_NO=l.loc_gst_no ,@CPARTY_GSTN_NO=a.Party_Gst_No ,@BREGISTERED_DELEER=l.registered_gst  ,
+			         @bExportInvoice=ISNULL(b.custdym_export_gst_percentage_Applicable,0),@CFC_CODE=fc_code ,
+					 @DCMDT=a.cm_dt ,@CPARTYSTATECODE=A.party_state_code 
+			 FROM CMM01106 A (NOLOCK) 
+			 JOIN LOCATION L (NOLOCK) ON a.location_Code=L.DEPT_ID 
+			 JOIN custdym B (NOLOCK) ON A.CUSTOMER_CODE =B.CUSTOMER_CODE
+			 WHERE A.CM_ID=@CMEMOID
+
+			  IF ISNULL(@CFC_CODE,'')IN('','0000000')
+		        SET @GST_DEPT_ID_FILTER=''
+	          ELSE
+	           SET @GST_DEPT_ID_FILTER=@CLOCATIONID
+		
+		    IF OBJECT_ID('TEMPDB..#TMPGST','U') IS NOT NULL
+		        DROP TABLE #TMPGST
+			
+			
+			 
+			   IF ISNULL (@BREGISTERED_DELEER,0)=1 AND isnull(@CPARTY_GSTN_NO,'')<>isnull(@CLOC_GSTN_NO,'') AND isnull(@bExportInvoice,0)=0 
+				 BEGIN
+
+
+				   DECLARE @CENABLE_MULTI_CURRENCY VARCHAR(10)
+		            SELECT  TOP 1 @CENABLE_MULTI_CURRENCY=VALUE  FROM config WHERE config_option ='ENABLE_MULTI_CURRENCY' 
+		
+		           IF ISNULL(@CENABLE_MULTI_CURRENCY,'')<>'1'
+				   BEGIN
+				        
+						IF EXISTS (SELECT TOP 1'U' FROM HSN_DET a (nolock) join cmd01106 b (nolock) on a.HSN_CODE =b.hsn_code  WHERE ISNULL (a.DEPT_ID,'')<>'' and b.cm_id  =@CMEMOID)
+						BEGIN
+						    SET @CERRORMSG='Multi currency not enabled but Location wise hsn  maintained  Please contact head Office '
+							 RETURN
+
+						END
+
+				    END
+
+
+						;WITH CTE AS
+						(
+						SELECT a.cm_id,b.product_code ,b.gst_percentage  , (B.NET-ISNULL(B.CMM_DISCOUNT_AMOUNT,0)) AS NET_VALUE,
+						       SR=ROW_NUMBER() OVER (PARTITION BY B.ROW_ID ORDER BY C.WEF DESC),
+							   C.TAX_PERCENTAGE AS HSN_GST_PERCENTAGE
+						FROM cmm01106  A (NOLOCK)
+						JOIN cmd01106  B (NOLOCK) ON A.cm_id =B.cm_id 
+						JOIN CUSTDYM CUS (NOLOCK) ON A.CUSTOMER_CODE=CUS.CUSTOMER_CODE 
+						LEFT JOIN HSN_DET C (NOLOCK) ON B.HSN_CODE =C.HSN_CODE AND C.WEF  <=CM_DT AND ISNULL(C.DEPT_ID,'')=@GST_DEPT_ID_FILTER
+						WHERE A.cm_id  =@CMEMOID
+						)
+						SELECT *  into #TMPGST FROM CTE WHERE SR=1 and isnull(gst_percentage,0)=0 and isnull(HSN_GST_PERCENTAGE,0)<>0
+						and isnull(NET_VALUE,0)<>0
+
+						if exists (select top 1 'u' from #TMPGST)
+						begin
+						     
+							DELETE FROM SLS_GST_TAXINFO_CALC  WHERE SP_ID=@NSPID
+
+                            INSERT SLS_GST_TAXINFO_CALC	(memo_dt, PRODUCT_CODE, SP_ID ,NET_VALUE,TAX_METHOD,ROW_ID,QUANTITY,MRP )  
+							SELECT @DCMDT, A.PRODUCT_CODE,@NSPID AS SP_ID,(A.NET-ISNULL(A.CMM_DISCOUNT_AMOUNT,0)) AS NET_VALUE,
+							(CASE WHEN A.TAX_METHOD=2 THEN 1 ELSE 2 END) AS TAX_METHOD,A.ROW_ID,A.QUANTITY,A.MRP 
+							FROM cmd01106  a
+							WHERE A.cm_id  =@CMEMOID and  QUANTITY>0 OR REF_SLS_MEMO_DT>'2017-06-30' 
+							AND TAX_METHOD=1 
+
+
+							IF EXISTS (SELECT TOP 1'U' FROM SLS_GST_TAXINFO_CALC WHERE SP_ID=@NSPID)
+							BEGIN
+							  	EXEC SP3S_GST_TAX_CAL_SLS
+								@CXN_TYPE='SLS',
+								@CMEMO_ID='',
+								@DMEMO_DT=@DCMDT,
+								@NSPID=@NSPID,
+								@CPARTYSTATE_CODE=@CPARTYSTATECODE,
+								@BLOCALBILL= 0,
+								@CPARTY_GSTN_NO=@CPARTY_GSTN_NO,
+								@CLOCATIONID=@CLOCATIONID,
+								@CERRMSG=@CERRORMSG OUTPUT
+
+								
+								if isnull(@CERRORMSG,'')<>''
+								   RETURN
+
+								UPDATE A SET TAX_AMOUNT=0,TAX_PERCENTAGE=0,
+								HSN_CODE=B.HSN_CODE,GST_PERCENTAGE=B.GST_PERCENTAGE,IGST_AMOUNT=B.IGST_AMOUNT,
+								CGST_AMOUNT=B.CGST_AMOUNT,SGST_AMOUNT=B.SGST_AMOUNT,
+								XN_VALUE_WITHOUT_GST=B.XN_VALUE_WITHOUT_GST,XN_VALUE_WITH_GST=B.XN_VALUE_WITH_GST,
+								CESS_AMOUNT =ISNULL(b.CESS_AMOUNT,0)
+								FROM CMD01106 A  (NOLOCK)
+								JOIN  SLS_GST_TAXINFO_CALC B (NOLOCK) ON B.ROW_ID=A.ROW_ID
+								WHERE   B.SP_ID=@NSPID
+								AND A.CM_ID =@CMEMOID
+
+								UPDATE  CMM01106 SET HO_SYNCH_LAST_UPDATE ='' WHERE CM_ID =@CMEMOID
+
+						    END
+		
+							   IF EXISTS (SELECT TOP 1 'U' FROM CMD01106 (nolock) WHERE CM_ID =@CMEMOID AND ISNULL(GST_PERCENTAGE,0)=0 and (NET-ISNULL(CMM_DISCOUNT_AMOUNT,0))<>0)
+							   BEGIN
+								 SET @CERRORMSG='Gst Not Calculated In Outward Transaction Please check'
+								 RETURN
+
+							  END
+
+						  END
+          END
+
+		  UPDATE A SET HO_SYNCH_LAST_UPDATE ='' from cmm01106 A (NOLOCK) where cm_id=@CMEMOID
+			
+
+END

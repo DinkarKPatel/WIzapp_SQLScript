@@ -1,0 +1,2 @@
+---Discarded this Procedure as it is not required because application is taking report column at PP from sku_names
+---confirmed by anil on 18-12-2020

@@ -1,0 +1,158 @@
+
+-- LOOK UP TABLE FOR ALL TRANSACTION MODULES    
+CREATE PROC SP_ERP_LOOKUP    
+(    
+ @NMODE INT,    
+ @CXNTYPE VARCHAR(10),    
+ @CFINYEAR VARCHAR(10),    
+ @CWIZAPPUSERCODE VARCHAR(10),    
+ @CREFMEMOID VARCHAR(40)='',    
+ @CREFMEMODT DATETIME='',
+ @BRAW BIT=0    
+)    
+--WITH ENCRYPTION
+AS    
+BEGIN    
+ -- @NMODE :  1 - TOP RECORD    
+ --    2 - NEXT RECORD (@CREFMEMOID AND @CREFMEMODT IS MANDATORY)    
+ --    3 - PREVIOUS RECORD (@CREFMEMOID AND @CREFMEMODT IS MANDATORY)    
+ --    4 - LAST RECORD    
+  
+ DECLARE @CCMD NVARCHAR(MAX),    
+   @CREFMEMOSTR NVARCHAR(MAX),    
+   @CTABLENAME VARCHAR(20),    
+   @CCOLXNID VARCHAR(20),    
+   @CCOLXNNO VARCHAR(20),    
+   @CCOLXNDT VARCHAR(20),    
+   @CDFMXNTYPE VARCHAR(10),    
+   @CDFMDATE DATETIME,    
+   @CDFMSTR NVARCHAR(50),    
+   @CFROMTOPORDER VARCHAR(5),    
+   @CWHERECLAUSE NVARCHAR(MAX)    
+  
+ DECLARE @OUTPUTC TABLE ( XN_ID VARCHAR(40), XN_NO VARCHAR(20), XN_DT DATETIME )    
+  
+ SET @CCMD = N''    
+ SET @CREFMEMOSTR = N''    
+ SET @CDFMSTR = N''    
+ SET @CWHERECLAUSE = N''    
+  
+ SET @CFROMTOPORDER = (CASE WHEN @NMODE IN (1,2) THEN ' ASC ' ELSE ' DESC ' END )    
+  
+ IF @CXNTYPE = 'SLS'    
+ BEGIN    
+  SET @CTABLENAME = 'CMM01106'    
+  SET @CCOLXNID = 'CM_ID'    
+  SET @CCOLXNNO = 'CM_NO'    
+  SET @CCOLXNDT = 'CM_DT'    
+  SET @CDFMXNTYPE = 'SLS'   -- MODULE TYPE OF DATAFREEZING - SLS : RETAIL SALES    
+ END    
+  
+ IF @CXNTYPE = 'PUR'    
+ BEGIN    
+  SET @CTABLENAME = 'PIM01106'    
+  SET @CCOLXNID = 'MRR_ID'    
+  SET @CCOLXNNO = 'MRR_NO'    
+  SET @CCOLXNDT = 'RECEIPT_DT'    
+  SET @CDFMXNTYPE = 'PUR'   -- MODULE TYPE OF DATAFREEZING - PUR : PURCHASE  
+
+  IF @BRAW = 1
+     SET @CWHERECLAUSE=  ' AND SUBSTRING(A.MRR_NO,5,1)=''R'' '   
+  ELSE
+    SET @CWHERECLAUSE=  ' AND SUBSTRING(A.MRR_NO,5,1)<>''R'' '    
+    
+ END    
+  
+ IF @CXNTYPE = 'PO'    
+ BEGIN    
+  SET @CTABLENAME = 'POM01106'    
+  SET @CCOLXNID = 'PO_ID'    
+  SET @CCOLXNNO = 'PO_NO'    
+  SET @CCOLXNDT = 'PO_DT'    
+  SET @CDFMXNTYPE = 'PUR'   -- MODULE TYPE OF DATAFREEZING - PUR : PURCHASE    
+ END    
+  
+ IF @CXNTYPE = 'OPS'    
+ BEGIN    
+  SET @CTABLENAME = 'OPS_MST'    
+  SET @CCOLXNID = 'MEMO_ID'    
+  SET @CCOLXNNO = 'MEMO_NO'    
+  SET @CCOLXNDT = 'MEMO_DT'    
+  SET @CDFMXNTYPE = 'OPS'   -- MODULE TYPE OF DATAFREEZING - PUR : PURCHASE    
+ END    
+  
+ -- GETTING FREEZING DATE FOR THE CURRENT USER FOR GIVEN MODULE    
+ SELECT @CDFMDATE = A.FREEZING_DATE     
+ FROM DFMSETUP A    
+ JOIN USERS B ON A.USER_CODE = B.USER_CODE    
+ WHERE B.VIEW_DATA_AFTER_DFM = 0    
+ AND A.MODULE_NAME = @CDFMXNTYPE    
+ AND A.USER_CODE = @CWIZAPPUSERCODE    
+ AND A.FREEZING_DATE <> ''    
+  
+ IF @CDFMDATE IS NOT NULL    
+  SET @CDFMSTR = N' AND A.' + @CCOLXNDT + ' > ''' + CONVERT(VARCHAR, @CDFMDATE) + ''''    
+  
+ IF (@NMODE IN (2,3)) AND (@CREFMEMOID<>'' AND @CREFMEMODT<>'')    
+ BEGIN    
+  IF @NMODE = 2    
+   SET @CREFMEMOSTR = N' AND A.' + @CCOLXNID + ' > ''' + @CREFMEMOID +     
+        ''' AND A.' + @CCOLXNDT + ' >= ''' + CONVERT(VARCHAR, @CREFMEMODT) + ''''    
+  ELSE     
+   SET @CREFMEMOSTR = N' AND A.' + @CCOLXNID + ' < ''' + @CREFMEMOID +     
+        ''' AND A.' + @CCOLXNDT + ' <= ''' + CONVERT(VARCHAR, @CREFMEMODT) + ''''    
+ END    
+  
+ SET @CCMD = N'    
+    SELECT X.' + @CCOLXNID + ', X.' + @CCOLXNNO + ', X.' + @CCOLXNDT + '    
+    FROM    
+    (    
+     SELECT TOP 1 A.' + @CCOLXNID +', A.' + @CCOLXNNO + ', A.' + @CCOLXNDT + '    
+     FROM ' + @CTABLENAME +' A  (NOLOCK)   
+     WHERE A.FIN_YEAR = ''' + @CFINYEAR + '''' +     
+     @CREFMEMOSTR +     
+     @CDFMSTR +    
+     @CWHERECLAUSE +    
+     N' ORDER BY A.' + @CCOLXNDT + @CFROMTOPORDER + ', A.' + @CCOLXNNO + @CFROMTOPORDER + '    
+    ) X    
+    ORDER BY X.' + @CCOLXNDT +', X.' + @CCOLXNNO + ''    
+  
+ PRINT @CCMD    
+ INSERT @OUTPUTC    
+ EXEC SP_EXECUTESQL @CCMD    
+  
+ IF NOT EXISTS ( SELECT XN_ID FROM @OUTPUTC )    
+ BEGIN    
+  IF (@NMODE IN (2,3)) AND (@CREFMEMOID<>'' AND @CREFMEMODT<>'')    
+  BEGIN    
+   IF @NMODE = 2    
+    SET @CREFMEMOSTR = N' AND A.' + @CCOLXNID + ' <> ''' + @CREFMEMOID +     
+         ''' AND A.' + @CCOLXNDT + ' > ''' + CONVERT(VARCHAR, @CREFMEMODT) + ''''    
+   ELSE     
+    SET @CREFMEMOSTR = N' AND A.' + @CCOLXNID + ' <> ''' + @CREFMEMOID +     
+         ''' AND A.' + @CCOLXNDT + ' < ''' + CONVERT(VARCHAR, @CREFMEMODT) + ''''    
+  END    
+  
+  SET @CCMD = N'    
+     SELECT X.' + @CCOLXNID + ', X.' + @CCOLXNNO + ', X.' + @CCOLXNDT + '    
+     FROM    
+     (    
+      SELECT TOP 1 A.' + @CCOLXNID +', A.' + @CCOLXNNO + ', A.' + @CCOLXNDT + '    
+      FROM ' + @CTABLENAME +' A  (NOLOCK)   
+      WHERE A.FIN_YEAR = ''' + @CFINYEAR + '''' +     
+      @CREFMEMOSTR +     
+      @CDFMSTR +    
+      @CWHERECLAUSE +    
+      N' ORDER BY A.' + @CCOLXNDT + @CFROMTOPORDER + ', A.' + @CCOLXNNO + @CFROMTOPORDER + '    
+     ) X    
+     ORDER BY X.' + @CCOLXNDT +', X.' + @CCOLXNNO + ''    
+  
+  PRINT @CCMD    
+  INSERT @OUTPUTC    
+  EXEC SP_EXECUTESQL @CCMD    
+ END    
+  
+ END_PROC:    
+ SELECT * FROM @OUTPUTC    
+END        
+--********************************* END OF SP_ERP_LOOKUP    

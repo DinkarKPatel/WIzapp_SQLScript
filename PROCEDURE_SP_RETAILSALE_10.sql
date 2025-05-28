@@ -1,0 +1,23 @@
+CREATE PROCEDURE SP_RETAILSALE_10-- (LocId 3 digit change only variable width change by Sanjay:30-10-2024)
+(  
+	 @CQUERYID			NUMERIC(2),  
+	 @CWHERE			VARCHAR(MAX)='',  
+	 @CFINYEAR			VARCHAR(5)='',  
+	 @CDEPTID			VARCHAR(4)='',  
+	 @NNAVMODE			NUMERIC(2)=1,  
+	 @CWIZAPPUSERCODE	VARCHAR(10)='',  
+	 @CREFMEMOID		VARCHAR(40)='',  
+	 @CREFMEMODT		DATETIME='',  
+	 @BINCLUDEESTIMATE	BIT=1,  
+	 @CFROMDT			DATETIME='',  
+	 @CTODT				VARCHAR(50)='',
+	 @bCardDiscount		BIT=0,
+	 @cCustCode			VARCHAR(15)=''
+) 
+AS  
+BEGIN  
+	SELECT DISTINCT TOP 50 SKU.PRODUCT_CODE,ARTICLE_CODE,p.quantity_in_stock AS [Quantity],p.dept_id,P.bin_id
+	FROM SKU  (NOLOCK)    
+	JOIN PMT01106 P (NOLOCK) ON P.PRODUCT_CODE=SKU.PRODUCT_CODE  
+	WHERE 1=2
+end

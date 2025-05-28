@@ -1,0 +1,119 @@
+CREATE PROCEDURE SP3S_VERIFY_SLSDATA_MERGE_CHANGES
+@cMemoId VARCHAR(40),
+@cSpId VARCHAR(40)
+AS
+BEGIN
+	
+	DECLARE @CFILTERCONDITION VARCHAR(1000),@CINSSPID VARCHAR(40),@CJOINSTR VARCHAR(500)
+	PRINT 'gen tempdata for 1'
+	SET @CFILTERCONDITION=' b.cm_id='''+@cMemoId+''''
+	set @CINSSPID=@cSpId+LEFT(@cMemoId,2)
+	
+
+	EXEC UPDATEMASTERXN_MIRROR @CSOURCEDB='',@CSOURCETABLE='cmm01106',@CDESTDB=''
+								,@CDESTTABLE='sls_cmm01106_upload',@CKEYFIELD1='cm_id',@CKEYFIELD2='',@CKEYFIELD3=''
+								,@LINSERTONLY=1,@CFILTERCONDITION=@CFILTERCONDITION,@LUPDATEONLY=0
+								,@BALWAYSUPDATE=0,@BUPDATEXNS=1,@CINSSPID=@CINSSPID,@CSEARCHTABLE='cmm01106'
+	
+	PRINT 'gen tempdata for 2'
+	EXEC SP3S_GENFILTERED_UPDATESTR
+	@cSpId=@cSpId ,
+	@cInsSpId=@cInsSpId,
+	@cTableName='cmm01106',
+	@cUploadTableName='sls_cmm01106_upload',
+	@cKeyfield='cm_id'
+
+
+	PRINT 'gen tempdata for 3'
+	EXEC UPDATEMASTERXN_MIRROR @CSOURCEDB='',@CSOURCETABLE='cmd01106',@CDESTDB=''
+								,@CDESTTABLE='sls_cmd01106_upload',@CKEYFIELD1='cm_id',@CKEYFIELD2='',@CKEYFIELD3=''
+								,@LINSERTONLY=1,@CFILTERCONDITION=@CFILTERCONDITION,@LUPDATEONLY=0
+								,@BALWAYSUPDATE=0,@BUPDATEXNS=1,@CINSSPID=@CINSSPID,@CSEARCHTABLE='cmd01106'	
+	
+	PRINT 'gen tempdata for 4'
+	EXEC SP3S_GENFILTERED_UPDATESTR
+	@cSpId=@cSpId ,
+	@cInsSpId=@cInsSpId,
+	@cTableName='cmd01106',
+	@cUploadTableName='sls_cmd01106_upload',
+	@cKeyfield='row_id'
+
+	PRINT 'gen tempdata for 5'
+	EXEC UPDATEMASTERXN_MIRROR @CSOURCEDB='',@CSOURCETABLE='cmd_cons',@CDESTDB=''
+								,@CDESTTABLE='sls_cmd_cons_upload',@CKEYFIELD1='cm_id',@CKEYFIELD2='',@CKEYFIELD3=''
+								,@LINSERTONLY=1,@CFILTERCONDITION=@CFILTERCONDITION,@LUPDATEONLY=0
+								,@BALWAYSUPDATE=0,@BUPDATEXNS=1,@CINSSPID=@CINSSPID,@CSEARCHTABLE='cmd_cons'	
+	
+	PRINT 'gen tempdata for 6'
+	EXEC SP3S_GENFILTERED_UPDATESTR
+	@cSpId=@cSpId ,
+	@cInsSpId=@cInsSpId,
+	@cTableName='cmd_cons',
+	@cUploadTableName='sls_cmd_cons_upload',
+	@cKeyfield='row_id'
+
+	PRINT 'gen tempdata for 7'
+	SET @CFILTERCONDITION=' b.cm_id='''+@cMemoId+''' AND row_id<>'''''
+	EXEC UPDATEMASTERXN_MIRROR @CSOURCEDB='',@CSOURCETABLE='COUPON_REDEMPTION_INFO',@CDESTDB=''
+								,@CDESTTABLE='SLS_COUPON_REDEMPTION_INFO_UPLOAD',@CKEYFIELD1='cm_id',@CKEYFIELD2='',@CKEYFIELD3=''
+								,@LINSERTONLY=1,@CFILTERCONDITION=@CFILTERCONDITION,@LUPDATEONLY=0
+								,@BALWAYSUPDATE=0,@BUPDATEXNS=1,@CINSSPID=@CINSSPID,@CSEARCHTABLE='COUPON_REDEMPTION_INFO'	
+
+	PRINT 'gen tempdata for 8'			
+	EXEC SP3S_GENFILTERED_UPDATESTR
+	@cSpId=@cSpId ,
+	@cInsSpId=@cInsSpId,
+	@cTableName='COUPON_REDEMPTION_INFO',
+	@cUploadTableName='SLS_COUPON_REDEMPTION_INFO_UPLOAD',
+	@cKeyfield='row_id'
+
+	PRINT 'gen tempdata for 9'
+	SELECT @CJOINSTR=' JOIN sls_cmm01106_upload c ON c.customer_code=b.customer_code ',
+		   @CFILTERCONDITION = ' c.sp_id='''+@cSpId+''''
+
+	EXEC UPDATEMASTERXN_MIRROR @CSOURCEDB='',@CSOURCETABLE='custdym',@CDESTDB=''
+								,@CDESTTABLE='sls_custdym_upload',@CKEYFIELD1='cm_id',@CKEYFIELD2='',@CKEYFIELD3=''
+								,@LINSERTONLY=1,@CFILTERCONDITION=@CFILTERCONDITION,@LUPDATEONLY=0,@CJOINSTR=@CJOINSTR
+								,@BALWAYSUPDATE=0,@BUPDATEXNS=1,@CINSSPID=@CINSSPID,@CSEARCHTABLE='custdym'	
+
+	PRINT 'gen tempdata for 10'
+	EXEC SP3S_GENFILTERED_UPDATESTR
+	@cSpId=@cSpId ,
+	@cInsSpId=@cInsSpId,
+	@cTableName='custdym',
+	@cUploadTableName='sls_custdym_upload',
+	@cKeyfield='customer_code'
+
+	PRINT 'gen tempdata for 11'	
+	SET @CFILTERCONDITION=' b.memo_id='''+@cMemoId+''' AND b.xn_type=''sls'''
+
+	EXEC UPDATEMASTERXN_MIRROR @CSOURCEDB='',@CSOURCETABLE='paymode_xn_det',@CDESTDB=''
+								,@CDESTTABLE='sls_paymode_xn_det_upload',@CKEYFIELD1='memo_id',@CKEYFIELD2='',@CKEYFIELD3=''
+								,@LINSERTONLY=1,@CFILTERCONDITION=@CFILTERCONDITION,@LUPDATEONLY=0
+								,@BALWAYSUPDATE=0,@BUPDATEXNS=1,@CINSSPID=@CINSSPID,@CSEARCHTABLE='paymode_xn_det'
+
+	PRINT 'gen tempdata for 12'
+	EXEC SP3S_GENFILTERED_UPDATESTR
+	@cSpId=@cSpId ,
+	@cInsSpId=@cInsSpId,
+	@cTableName='paymode_xn_det',
+	@cUploadTableName='sls_paymode_xn_det_upload',
+	@cKeyfield='row_id'
+
+PRINT 'gen tempdata for 13'
+	SET @CFILTERCONDITION=' b.memono='''+@cMemoId+''' AND b.MODULENAME=''FRMSALE'''
+
+	EXEC UPDATEMASTERXN_MIRROR @CSOURCEDB='',@CSOURCETABLE='DAILOGFILE',@CDESTDB=''
+								,@CDESTTABLE='SLS_DAILOGFILE_UPLOAD',@CKEYFIELD1='memo_id',@CKEYFIELD2='',@CKEYFIELD3=''
+								,@LINSERTONLY=1,@CFILTERCONDITION=@CFILTERCONDITION,@LUPDATEONLY=0
+								,@BALWAYSUPDATE=0,@BUPDATEXNS=1,@CINSSPID=@CINSSPID,@CSEARCHTABLE='DAILOGFILE'
+
+								PRINT 'gen tempdata for 14'
+	EXEC SP3S_GENFILTERED_UPDATESTR
+	@cSpId=@cSpId ,
+	@cInsSpId=@cInsSpId,
+	@cTableName='DAILOGFILE',
+	@cUploadTableName='SLS_DAILOGFILE_UPLOAD',
+	@cKeyfield='ROWID'
+
+END

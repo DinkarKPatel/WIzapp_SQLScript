@@ -1,0 +1,61 @@
+CREATE PROCEDURE SPWOW_GENXPERT_REPDATA_CNPR
+@cRepTempTable VARCHAR(400),
+@dFromDt DATETIME,
+@dToDt DATETIME,
+@cHoLocId VARCHAR(5)=''
+AS
+BEGIN
+	DECLARE @cXnType VARCHAR(10),@cCmd NVARCHAR(MAX),@cBaseExpr VARCHAR(MAX),@cBaseExprOutput VARCHAR(MAX),
+	@cGrpCols VARCHAR(MAX),	@cLayoutCols VARCHAR(MAX),@cJoinStr VARCHAR(MAX),@cInsCols VARCHAR(MAX)
+	
+
+	SELECT @cBaseExpr='[LAYOUT_COLS]   from [DATABASE].dbo.CNPS_DET CNPS_DET (NOLOCK)       
+	JOIN  [DATABASE].dbo.CNPS_MST CNPS_MST (NOLOCK) ON CNPS_DET.PS_ID = CNPS_MST.PS_ID       
+	join [DATABASE].dbo.cnm01106  on cnm01106.cn_id= CNPS_MST.wsr_cn_id
+	join SKU_NAMES (NOLOCK) ON sku_names.product_code=cnps_det.PRODUCT_CODE
+	JOIN location SourceLocation (NOLOCK) ON SourceLocation.dept_id=cnps_mst.location_code
+
+	    Left Outer join BARCODEWISE_EOSS_SCHEMES_INFO EOSSSCH (NOLOCK) ON EOSSSCH.location_id=cnps_mst.location_code 
+	and EOSSSCH.PRoduct_code= SKU_NAMES.Product_Code
+
+	LEFT JOIN sku_xfp (NOLOCK) ON sku_xfp.dept_id=cnps_mst.location_code AND sku_xfp.product_code=CNPS_DET.PRODUCT_CODE
+	left outer join loc_names groupSuppler on groupSuppler.dept_id= sku_xfp.challan_source_location_code
+
+	JOIN bin SourceBin on SourceBin.bin_id=CNPS_DET.bin_id
+	JOIN LOC_NAMES (NOLOCK) on LOC_NAMES.dept_id=cnps_mst.location_code
+	JOIN lm01106 party_lm01106 on party_lm01106.ac_code=CNPS_MST.ac_code
+	Left Outer  JOIN lmp01106 party_lmp01106 on party_lmp01106.ac_code=CNPS_MST.ac_code
+	Left Outer  JOIN area  party_area on party_lmp01106.area_code=party_area.area_code
+	Left Outer  JOIN city  party_city on party_city.city_code=party_area.city_code
+	Left Outer  JOIN state  party_state on party_state.state_code=party_city.state_code
+
+	LEFT JOIN lm01106 oem_supplier_lm01106 on oem_supplier_lm01106.ac_code=sku_names.oem_ac_code
+		LEFT JOIN lmp01106 oem_supplier_lmp01106 on oem_supplier_lmp01106.ac_code=sku_names.oem_ac_code
+		LEFT JOIN area  oem_supplier_area on oem_supplier_lmp01106.area_code=oem_supplier_area.area_code
+		LEFT JOIN city  oem_supplier_city on oem_supplier_city.city_code=oem_supplier_area.city_code
+		LEFT JOIN state  oem_supplier_state on oem_supplier_state.state_code=oem_supplier_city.state_code
+
+		LEFT OUTER JOIN  #skumrpcat   skumrpcat ON 1=1   AND SKU_NAMES.MRP BETWEEN skumrpcat.FROMN  AND skumrpcat.TON 
+
+	LEFT JOIN XN_ITEM_TYPE_DESC_mst (NOLOCK) on XN_ITEM_TYPE_DESC_mst.XN_ITEM_TYPE=CNPS_MST.XN_ITEM_TYPE
+  	WHERE cnm01106.cn_dt BETWEEN [DFROMDT] AND [DTODT]  AND CNPS_MST.cancelled=0 
+	 AND [WHERE]       
+	group by [GROUPBY]'
+
+	EXEC SPWOW_GETXPERT_INSCOLS
+	@cXntype='CNPR',
+	@dFromDt=@dFromDt,
+	@dToDt=@dToDt,
+	@cHoLocId=@cHoLocId,
+	@cBaseExprInput=@cBaseExpr,
+	@cInsCols=@cInsCols OUTPUT,
+	@cBaseExprOutput=@cBaseExprOutput OUTPUT
+
+
+	SET @cCmd=N'INSERT INTO '+@cRepTempTable+' ('+@cInsCols+')
+				SELECT '+@cBaseExprOutput
+
+	PRINT @cCmd
+	EXEC SP_EXECUTESQL @cCmd
+
+END

@@ -1,0 +1,194 @@
+CREATE PROCEDURE SP_RPT_GITREP  --(LocId 3 digit change by Sanjay:30-10-2024)
+@DTODT DATETIME ,  
+@CSOURCEDEPTID VARCHAR(4)='',  
+@CTARGETDEPTID VARCHAR(4)='',
+@NDUEDAYS INT=0,
+@nEstimate INT =0,
+@nXNITEMTYPE	INT=0
+AS  
+BEGIN  
+	 DECLARE @CCUTOFFDATE VARCHAR(100),@CHOLOCID VARCHAR(10),@CLOCID VARCHAR(10),@cCmd NVARCHAR(MAX),
+			 @cGitTable VARCHAR(200),@cdeptidfilter varchar(1000)
+	   
+	 SELECT TOP 1 @CCUTOFFDATE=VALUE FROM CONFIG WHERE CONFIG_OPTION='GIT_CUT_OFF_DATE'  
+
+	 SELECT TOP 1 @CHOLOCID=VALUE FROM CONFIG WHERE CONFIG_OPTION='HO_LOCATION_ID' 
+
+	 SELECT TOP 1 @CLOCID=VALUE FROM CONFIG WHERE CONFIG_OPTION='LOCATION_ID' 
+	 
+	 --SELECT TOP 1 @CLOCID=DEPT_ID FROM NEW_APP_LOGIN_INFO (nolock) WHERE SPID=@@SPID  
+	   
+	 SET @CCUTOFFDATE=ISNULL(@CCUTOFFDATE,'')  
+	 
+	 IF @CLOCID=@CHOLOCID
+	 BEGIN
+		
+
+		SELECT 'WSL'+A.INV_ID  AS MEMO_ID,ind.QUANTITY as git_qty,ind.PRODUCT_CODE ,ind.bin_id
+		   INTO #TMPGITLOCS
+		FROM INM01106 A (NOLOCK)
+		join ind01106 ind (nolock) on a.INV_ID =ind.inv_id 
+		LEFT JOIN PIM01106 B (NOLOCK) ON A.INV_ID=B.INV_ID AND B.CANCELLED=0 AND B.RECEIPT_DT <=@DTODT AND B.RECEIPT_DT <>''
+		WHERE A.INV_DT BETWEEN @CCUTOFFDATE AND @DTODT AND A.INV_MODE =2 AND A.CANCELLED =0 and b.inv_id is null
+		UNION ALL
+		SELECT 'PRT'+A.RM_ID,rmd.quantity git_qty,rmd.PRODUCT_CODE ,rmd.bin_id
+		FROM RMM01106 A (NOLOCK)
+		join rmd01106 rmd (nolock) on a.rm_id =rmd.rm_id 
+		LEFT JOIN CNM01106 B (NOLOCK) ON A.RM_ID=B.RM_ID AND B.CANCELLED=0 AND B.RECEIPT_DT <=@DTODT AND B.RECEIPT_DT <>''
+		WHERE A.RM_DT BETWEEN @CCUTOFFDATE AND @DTODT AND A.MODE =2 AND A.CANCELLED =0 and b.rm_id  is null
+
+		SET @cGitTable='#tmpgitlocs'
+		
+
+		----IF OBJECT_ID(@cGitTable,'U') IS  NULL  
+		----Begin
+		---- Select  '' AS Errmsg WHERE 1=2
+		---- return
+		----End
+
+		set @cdeptidfilter=''
+		if @CSOURCEDEPTID<>''
+		   set @cdeptidfilter=' and  C1.dept_id='''+@CSOURCEDEPTID+''''
+
+		if @CTARGETDEPTID<>''
+		   set @cdeptidfilter=@cdeptidfilter+' and  C.dept_id='''+@CTARGETDEPTID+''''
+
+
+
+		 SET @cCmd=N'
+		 SELECT  C.DEPT_ID AS [TARGET_DEPT_ID],C.DEPT_NAME AS   [TARGET_DEPT_NAME],  
+		   C1.DEPT_ID AS [SOURCE_DEPT_ID],C1.DEPT_NAME AS   [SOURCE_DEPT_NAME],    
+		                
+					A.INV_NO AS SOURCE_CHALLAN_NO,  
+					CONVERT(VARCHAR,A.INV_DT,105) AS SOURCE_CHALLAN_DT,
+					CONVERT(NUMERIC(14,2),SUM(b.git_qty*sn.pp)) AS CAL_GIT_PP,
+					a.net_amount AS CAL_GIT_VALUE,
+					SUM(b.git_qty) AS CAL_GIT_QTY    
+				  ,DATEDIFF(DD,A.INV_DT,'''+convert(varchar,@DTODT,110)+''') AS DUEDAYS,
+				  AG.Angadia_name,PM.bilty_no,pm.TOT_BOXES ,PM.RECEIPT_DT ,
+				  A.REMARKS ,''WSL''+A.INV_ID challan_id
+				   FROM '+@cGitTable+' B    
+		 JOIN INM01106 A ON A.INV_ID=SUBSTRING(B.MEMO_ID,4,LEN(b.memo_id))  
+		 JOIN LOCATION C ON C.DEPT_ID=A.PARTY_DEPT_ID  
+		 JOIN LOCATION C1 ON C1.DEPT_ID=A.LOCATION_CODE 		 
+		 LEFT OUTER JOIN PARCEL_DET PD ON A.INV_ID = PD.REF_MEMO_ID 
+		 LEFT OUTER JOIN parcel_mst PM on PD.parcel_memo_id = PM.parcel_memo_id and PM.xn_type= ''WSL''
+		 LEFT OUTER JOIN ANGM AG ON PM.angadia_code = AG.Angadia_code 
+		 JOIN sku_names sn(NOLOCK) ON LTRIM(RTRIM(sn.product_code))=LTRIM(RTRIM(b.product_code))
+		 WHERE isnull(c.inactive,0)=0 and LEFT(B.memo_id,3)=''WSL''  AND   ('+str(@NDUEDAYS)+'=0 OR DATEDIFF(DD,A.INV_DT,
+		 '''+convert(varchar,@DTODT,110)+''')>='+str(@NDUEDAYS)+')'+
+		 (case when @nEstimate IN (0,1) THEN ' AND memo_type=1 ' ELSE ' AND memo_type=2 ' END)+ 
+		 (case when @nXNITEMTYPE =1 THEN ' AND b.BIN_ID<>''999'' ' when @nXNITEMTYPE =2 THEN ' AND b.BIN_ID=''999'' 'ELSE ' ' END)+ @cdeptidfilter+ '
+		 GROUP BY C.DEPT_ID,C.DEPT_NAME,C1.DEPT_ID,C1.DEPT_NAME,A.INV_NO,A.INV_DT,a.net_amount,
+				  AG.Angadia_name,PM.bilty_no,pm.TOT_BOXES ,PM.RECEIPT_DT , A.REMARKS ,A.INV_ID
+		 UNION  
+		 SELECT     C.DEPT_ID AS [TARGET_DEPT_ID],C.DEPT_NAME AS   [TARGET_DEPT_NAME],
+					C1.DEPT_ID AS [SOURCE_DEPT_ID],C1.DEPT_NAME AS   [SOURCE_DEPT_NAME],     
+					A.RM_NO AS SOURCE_CHALLAN_NO,  
+					CONVERT(VARCHAR,A.RM_DT,105) AS SOURCE_CHALLAN_DT,
+					CONVERT(NUMERIC(14,2),SUM(b.git_qty*sn.pp)) AS CAL_GIT_PP,
+					a.total_amount AS CAL_GIT_VALUE,
+					SUM(b.git_qty) AS CAL_GIT_QTY    
+				  ,DATEDIFF(DD,A.RM_DT,'''+convert(varchar,@DTODT,110)+''') AS DUEDAYS,
+				   AG.Angadia_name,PM.bilty_no,pm.TOT_BOXES ,pm.receipt_dt ,
+				   A.REMARKS,''PRT''+A.RM_ID challan_id 
+		 FROM '+@cGitTable+' B    
+		 JOIN RMM01106 A ON A.RM_ID=SUBSTRING(B.MEMO_ID,4,LEN(b.memo_id))  
+		 JOIN LOCATION C ON C.DEPT_ID=A.PARTY_DEPT_ID  
+		 JOIN LOCATION C1 ON C1.DEPT_ID=a.location_code 
+		 LEFT OUTER JOIN PARCEL_DET PD ON A.RM_ID = PD.REF_MEMO_ID 
+		 LEFT OUTER JOIN parcel_mst PM on PD.parcel_memo_id = PM.parcel_memo_id and PM.xn_type= ''PRT''
+		 LEFT OUTER JOIN ANGM AG ON PM.angadia_code = AG.Angadia_code 
+		 JOIN sku_names sn(NOLOCK) ON LTRIM(RTRIM(sn.product_code))=LTRIM(RTRIM(b.product_code))
+ 		 WHERE isnull(c.inactive,0)=0 and LEFT(B.memo_id,3)=''PRT''  AND   ('+str(@NDUEDAYS)+'=0 OR DATEDIFF(DD,A.RM_DT,
+		 '''+convert(varchar,@DTODT,110)+''')>='+str(@NDUEDAYS)+')'+
+		(case when @nEstimate IN (0,1) THEN ' AND memo_type=1 ' ELSE ' AND memo_type=2 ' END)+
+		(case when @nXNITEMTYPE =1 THEN ' AND b.BIN_ID<>''999'' ' when @nXNITEMTYPE =2 THEN ' AND b.BIN_ID=''999'' 'ELSE ' ' END)+ @cdeptidfilter+'
+		 GROUP BY C.DEPT_ID,C.DEPT_NAME,C1.DEPT_ID,C1.DEPT_NAME,A.RM_NO,A.RM_DT,a.total_amount,
+				  AG.Angadia_name,PM.bilty_no,pm.TOT_BOXES ,PM.RECEIPT_DT , A.REMARKS ,A.RM_ID
+		 
+		 ORDER BY duedays DESC'
+
+		 PRINT @cCmd
+		 EXEC SP_EXECUTESQL @cCmd
+	 END
+	 
+	 ELSE
+	 IF @CLOCID<>@CHOLOCID
+	 BEGIN
+
+		 IF OBJECT_ID('TEMPDB..#TMPCHGITLOC','U') IS NOT NULL  
+			DROP TABLE #TMPCHGITLOC  
+		    
+		 SELECT 'WSL' AS XN_TYPE,A.MRR_ID AS MEMO_ID,A.INV_ID AS SOURCE_MEMO_ID,b.location_Code sourceLocId INTO #TMPCHGITLOC 
+		 FROM PIM01106 A (NOLOCK)   
+		 JOIN inm01106 b (NOLOCK) ON b.inv_id=a.inv_id
+		 WHERE A.INV_DT <= @DTODT AND A.INV_DT>=(CASE WHEN @CCUTOFFDATE<>'' THEN @CCUTOFFDATE ELSE A.INV_DT END)  
+		 AND (a.location_Code=@CSOURCEDEPTID OR @CSOURCEDEPTID='')  
+		 AND (a.location_Code=@CTARGETDEPTID OR @CTARGETDEPTID='')  
+		 AND (ISNULL(A.RECEIPT_DT,'')='' OR ISNULL(A.RECEIPT_DT,'')>@DTODT)  
+		 AND A.CANCELLED=0 AND A.INV_MODE=2 
+		 UNION  
+		 SELECT 'PRT' AS XN_TYPE,A.CN_ID AS MEMO_ID,A.RM_ID AS SOURCE_MEMO_ID,b.location_Code sourceLocId FROM CNM01106 A (NOLOCK)   
+		 JOIN rmm01106 b (NOLOCK) ON b.rm_id=a.rm_id
+		 WHERE A.CN_DT <= @DTODT AND A.CN_DT>=(CASE WHEN @CCUTOFFDATE<>'' THEN @CCUTOFFDATE ELSE A.CN_DT END)  
+		 AND (b.location_Code=@CSOURCEDEPTID OR @CSOURCEDEPTID='')  
+		 AND (a.location_Code=@CTARGETDEPTID OR @CTARGETDEPTID='')  
+		 AND (ISNULL(A.RECEIPT_DT,'')='' OR ISNULL(A.RECEIPT_DT,'')>@DTODT)  
+		 AND A.CANCELLED=0 AND A.MODE=2 
+		   
+		 CREATE INDEX IND_TMPCHGIT ON #TMPCHGITLOC (XN_TYPE,MEMO_ID)  
+		    
+		 SELECT  C.DEPT_ID AS [TARGET_DEPT_ID],C.DEPT_NAME AS   [TARGET_DEPT_NAME],  
+		   C1.DEPT_ID AS [SOURCE_DEPT_ID],C1.DEPT_NAME AS   [SOURCE_DEPT_NAME],    
+     	 A.INV_NO AS SOURCE_CHALLAN_NO,  
+		 CONVERT(VARCHAR,A.INV_DT,105) AS SOURCE_CHALLAN_DT,A.TOTAL_AMOUNT AS CAL_GIT_VALUE,
+		 CAST(PID.QTY AS NUMERIC(18,2)) AS CAL_GIT_QTY    
+	     ,DATEDIFF(DD,A.INV_DT,@DTODT) AS DUEDAYS     ,AG.Angadia_name,PM.bilty_no,pm.TOT_BOXES ,pm.receipt_dt ,
+		 A.REMARKS 
+	     FROM #TMPCHGITLOC B    
+		 JOIN   
+		 (  
+		  SELECT MRR_ID,SUM(QUANTITY) AS [QTY]   
+		  FROM PID01106  A JOIN #TMPCHGITLOC B ON A.MRR_ID=B.MEMO_ID  
+		  WHERE B.XN_TYPE='WSL'  GROUP BY MRR_ID
+		 )PID ON PID.MRR_ID=B.MEMO_ID  
+		 JOIN PIM01106 A ON A.MRR_ID=B.MEMO_ID  
+		 JOIN LOCATION C ON C.DEPT_ID=a.location_Code
+		 JOIN LOCATION C1 ON C1.DEPT_ID=b.sourceLocId		 
+		 LEFT OUTER JOIN PARCEL_DET PD ON A.MRR_ID = PD.REF_MEMO_ID 
+		 LEFT OUTER JOIN parcel_mst PM on PD.parcel_memo_id = PM.parcel_memo_id and PM.xn_type= 'WSL'
+		 LEFT OUTER JOIN ANGM AG ON PM.angadia_code = AG.Angadia_code 
+		 
+		 WHERE B.XN_TYPE='WSL'  AND   (@NDUEDAYS=0 OR DATEDIFF(DD,A.INV_DT,@DTODT)>=@NDUEDAYS)
+		 UNION  
+		 SELECT     C.DEPT_ID AS [TARGET_DEPT_ID],C.DEPT_NAME AS   [TARGET_DEPT_NAME],
+					C1.DEPT_ID AS [SOURCE_DEPT_ID],C1.DEPT_NAME AS   [SOURCE_DEPT_NAME],     
+					RIGHT(B.SOURCE_MEMO_ID,10) AS SOURCE_CHALLAN_NO,  
+					CONVERT(VARCHAR,A.CN_DT,105) AS SOURCE_CHALLAN_DT,A.TOTAL_AMOUNT AS CAL_GIT_VALUE,
+					CAST(CND.QTY AS NUMERIC(18,2)) AS CAL_GIT_QTY    
+				   ,DATEDIFF(DD,A.CN_DT,@DTODT) AS DUEDAYS    ,AG.Angadia_name,PM.bilty_no,pm.TOT_BOXES ,pm.receipt_dt ,
+				   A.REMARKS 
+				   FROM #TMPCHGITLOC B    
+		 JOIN   
+		 (  
+		  SELECT CN_ID,SUM(QUANTITY) AS [QTY]   
+		  FROM CND01106  A JOIN #TMPCHGITLOC B ON A.CN_ID=B.MEMO_ID  
+		  WHERE B.XN_TYPE='PRT'  GROUP BY CN_ID
+		 )CND ON CND.CN_ID=B.MEMO_ID  
+		 JOIN CNM01106 A ON A.CN_ID=B.MEMO_ID  
+		 JOIN LOCATION C ON C.DEPT_ID=a.location_Code
+		 JOIN LOCATION C1 ON C1.DEPT_ID=b.sourceLocId  
+		 LEFT OUTER JOIN PARCEL_DET PD ON A.CN_ID = PD.REF_MEMO_ID 
+		 LEFT OUTER JOIN parcel_mst PM on PD.parcel_memo_id = PM.parcel_memo_id and PM.xn_type= 'PRT'
+		 LEFT OUTER JOIN ANGM AG ON PM.angadia_code = AG.Angadia_code 
+		 
+		 
+		 WHERE B.XN_TYPE='PRT' AND (@NDUEDAYS=0 OR DATEDIFF(DD,A.CN_DT,@DTODT)>=@NDUEDAYS)
+		 
+		 ORDER BY DATEDIFF(DD,A.INV_DT,@DTODT) DESC --SOURCE_DEPT_ID,SOURCE_CHALLAN_DT  
+	 END	 
+	 
+END
+
+

@@ -1,0 +1,46 @@
+CREATE FUNCTION [DBO].[FNMIXSORT]  
+(  
+    @COLVALUE NVARCHAR(500)  
+)  
+RETURNS NVARCHAR(1000)  
+AS  
+  
+BEGIN  
+    DECLARE @P1 NVARCHAR(255),  
+        @P2 NVARCHAR(255),  
+        @P3 NVARCHAR(255),  
+        @P4 NVARCHAR(255),  
+        @INDEX TINYINT  
+  
+    IF @COLVALUE LIKE '[A-Z]%'  
+        SELECT  @INDEX = PATINDEX('%[0-9]%', @COLVALUE),  
+            @P1 = LEFT(CASE WHEN @INDEX = 0 THEN @COLVALUE ELSE LEFT(@COLVALUE, @INDEX - 1) END + REPLICATE(' ', 255), 255),  
+            @COLVALUE = CASE WHEN @INDEX = 0 THEN '' ELSE SUBSTRING(@COLVALUE, @INDEX, 255) END  
+    ELSE  
+        SELECT  @P1 = REPLICATE(' ', 255)  
+  
+    SELECT  @INDEX = PATINDEX('%[^0-9]%', @COLVALUE)  
+  
+    IF @INDEX = 0  
+        SELECT  @P2 = RIGHT(REPLICATE(' ', 255) + @COLVALUE, 255),  
+            @COLVALUE = ''  
+    ELSE  
+        SELECT  @P2 = RIGHT(REPLICATE(' ', 255) + LEFT(@COLVALUE, @INDEX - 1), 255),  
+            @COLVALUE = SUBSTRING(@COLVALUE, @INDEX, 255)  
+  
+    SELECT  @INDEX = PATINDEX('%[0-9,A-Z]%', @COLVALUE)  
+  
+    IF @INDEX = 0  
+        SELECT  @P3 = REPLICATE(' ', 255)  
+    ELSE  
+        SELECT  @P3 = LEFT(REPLICATE(' ', 255) + LEFT(@COLVALUE, @INDEX - 1), 255),  
+            @COLVALUE = SUBSTRING(@COLVALUE, @INDEX, 255)  
+  
+    IF PATINDEX('%[^0-9]%', @COLVALUE) = 0  
+        SELECT  @P4 = RIGHT(REPLICATE(' ', 255) + @COLVALUE, 255)  
+    ELSE  
+        SELECT  @P4 = LEFT(@COLVALUE + REPLICATE(' ', 255), 255)  
+  
+    RETURN  @P1 + @P2 + @P3 + @P4  
+  
+END

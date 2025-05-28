@@ -1,0 +1,27 @@
+CREATE PROCEDURE SPDB_USER_AUTHO
+@nMode NUMERIC(1,0),
+@cUserCode CHAR(7),
+@cDbName VARCHAR(40)=''
+AS
+BEGIN
+	DECLARE @cRoleId CHAR(7)
+	SELECT @cRoleId=role_id FROM users WHERE user_code=@cUserCode
+	
+	IF @nMode=1
+	BEGIN
+		select 'DASHBOARD' AS dbname FROM WIZMD_USER_AUTH (NOLOCK) WHERE user_code=@cUserCode AND dashboard=1
+		UNION
+		select 'SALEREPORT' AS dbname FROM WIZMD_USER_AUTH (NOLOCK) WHERE user_code=@cUserCode AND SALEREPORT=1
+		UNION
+		select 'CUSTOMREP' AS dbname FROM WIZMD_USER_AUTH (NOLOCK) WHERE user_code=@cUserCode AND CUSTOMREP=1
+		UNION
+		select 'IMGASSIGNMENT' AS dbname FROM WIZMD_USER_AUTH (NOLOCK) WHERE user_code=@cUserCode AND IMGASSIGNMENT=1
+		UNION
+		select 'AUDITTRAILREPORT' AS dbname FROM WIZMD_USER_AUTH (NOLOCK) WHERE user_code=@cUserCode AND AUDITTRAILREPORT=1
+		UNION
+		select 'APPROVEPO' AS dbname FROM WIZMD_USER_AUTH (NOLOCK) WHERE user_code=@cUserCode AND APPROVEPO=1
+		UNION
+		select form_name AS dbname FROM user_role_det a (NOLOCK) WHERE role_id=@cRoleId AND 
+		form_name IN ('KYB','KPIDB','RFCCDB','PERFDB','SALETARGETDB','TATANLDB','AGEINGANLDB') AND value='1'
+	END
+END

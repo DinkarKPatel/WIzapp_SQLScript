@@ -1,0 +1,37 @@
+CREATE PROCEDURE SP_EMP_PAYSLIP_LEAVESCALC_MAIN                      
+(                      
+ @CEMPID VARCHAR(20),                       
+ @NYEAR INT,                       
+ @NMONTH INT,                      
+ @BRETURNLEAVESONLY BIT=0                      
+)      
+--WITH ENCRYPTION                
+AS                      
+BEGIN                      
+	DECLARE @CPAYSLIPVERSION VARCHAR(2)
+	
+	SELECT TOP 1 @CPAYSLIPVERSION=VALUE FROM CONFIG WHERE CONFIG_OPTION='PAYSLIP_VERSION'
+	
+	SET @CPAYSLIPVERSION=(CASE WHEN ISNULL(@CPAYSLIPVERSION,'')='' THEN '1' ELSE ISNULL(@CPAYSLIPVERSION,'') END)
+	
+	IF @CPAYSLIPVERSION='1' --- DA MILANO VERSION
+		EXEC SP_EMP_PAYSLIP_LEAVESCALC_1
+        @CEMPID=@CEMPID,                       
+		@NYEAR=@NYEAR,                       
+		@NMONTH=@NMONTH,                      
+		@BRETURNLEAVESONLY=@BRETURNLEAVESONLY
+	ELSE
+	IF @CPAYSLIPVERSION='2' --- JASHN MUMBAI VERSION	
+		EXEC SP_EMP_PAYSLIP_LEAVESCALC_2
+        @CEMPID=@CEMPID,                       
+		@NYEAR=@NYEAR,                       
+		@NMONTH=@NMONTH,                      
+		@BRETURNLEAVESONLY=@BRETURNLEAVESONLY	
+	ELSE
+	IF @CPAYSLIPVERSION='3' --- RANGOLI KOLKATA VERSION	
+		EXEC SP_EMP_PAYSLIP_LEAVESCALC_3
+        @CEMPID=@CEMPID,                       
+		@NYEAR=@NYEAR,                       
+		@NMONTH=@NMONTH,                      
+		@BRETURNLEAVESONLY=@BRETURNLEAVESONLY			
+END

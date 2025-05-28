@@ -1,0 +1,368 @@
+CREATE PROCEDURE SPWOW_RETAILSALE
+(
+	@NQUERYID	NUMERIC(2,0),    
+	@CWHERE		NVARCHAR(MAX),    
+	@cLocId		CHAR(2)='',
+	@cBINId		VARCHAR(100)='',
+	@dtFrom		DATETIME='',
+	@dtTo		DATETIME=''
+)    
+AS    
+BEGIN    
+ 
+DECLARE @CCMD NVARCHAR(MAX),@CERRMSG NVARCHAR(MAX),@CCURLOCID CHAR(2), @IMAXLEVEL INT ,@CXN_TYPE VARCHAR(100),
+@AC_CODE VARCHAR(15),@cPOId VARCHAR(50),@cDBNAME VARCHAR(100)
+
+SET @cDBNAME=DB_NAME()+'_IMAGE'
+
+
+IF @NQUERYID = 1    
+GOTO LBLCUSTOMERSLOV    
+
+ELSE IF @NQUERYID = 2    
+GOTO LBLGETMST    
+
+ELSE IF @NQUERYID = 3    
+GOTO LBLGETDETAILS 
+
+ELSE IF @NQUERYID = 4    
+GOTO LBLBINLIST 
+
+ELSE IF @NQUERYID=5 
+GOTO LBLPAYMENTDET
+
+ELSE IF @NQUERYID=6
+GOTO LBLBILLSUMMARY
+
+ELSE IF @NQUERYID=7
+GOTO LBLCMLIST  
+ELSE IF @NQUERYID=71
+GOTO LBLCMLISTSUMMARY  
+ELSE IF @NQUERYID=72
+GOTO LBLCMRACKDETAIL 
+ELSE IF @NQUERYID=99
+GOTO LBLCOLUMNLIST
+
+ELSE    
+GOTO LAST    
+
+LBLBINLIST:
+--EXEC SP_GETBINUSERS @CUSERCODE=@CWHERE, @CDEPT_ID=@cLocId
+IF @CWHERE<>'0000000'
+	BEGIN
+		SELECT DISTINCT A.BIN_ID AS binId,A.BIN_NAME as binName,A.BIN_ALIAS AS binAlias,@CWHERE AS userCode, A.MAJOR_BIN_ID as majorBinId
+		FROM BIN A (NOLOCK)
+		JOIN BIN_LOC C (NOLOCK) ON C.BIN_ID=A.BIN_ID OR C.BIN_ID=A.major_bin_id
+		JOIN BINUSERS B (NOLOCK) ON B.BIN_ID=A.BIN_ID OR B.BIN_ID=A.major_bin_id
+		JOIN LOCATION D(NOLOCK) ON C.DEPT_ID= D.DEPT_ID
+		WHERE /*A.BIN_ID= A.MAJOR_BIN_ID AND */ A.INACTIVE=0 AND B.USER_CODE =@CWHERE AND C.DEPT_ID=@cLocId  AND ISNULL(D.ENABLE_BIN,0)=1
+		UNION 
+		SELECT '000' AS BIN_ID,'DEFAULT BIN' AS BIN_NAME,'DB' AS BIN_ALIAS,@CWHERE AS [USER_CODE] ,'000' AS MAJOR_BIN_ID
+		FROM LOCATION(NOLOCK) WHERE DEPT_ID=@cLocId AND ISNULL(ENABLE_BIN,0)=0
+	END		
+	ELSE
+	BEGIN
+		SELECT DISTINCT A.BIN_ID  AS binId,A.BIN_NAME  as binName,A.BIN_ALIAS  AS binAlias,@CWHERE AS userCode ,A.major_bin_id  as majorBinId
+		FROM BIN A (NOLOCK)
+		LEFT OUTER JOIN BIN_LOC C (NOLOCK) ON (C.BIN_ID=A.BIN_ID  OR C.BIN_ID=A.major_bin_id) AND C.DEPT_ID=@cLocId
+		LEFT OUTER JOIN LOCATION D(NOLOCK) ON C.DEPT_ID= D.DEPT_ID
+		WHERE /*A.BIN_ID= A.MAJOR_BIN_ID AND*/ A.INACTIVE=0 AND A.BIN_ID=(CASE WHEN C.DEPT_ID IS NULL THEN '000' ELSE A.BIN_ID END)
+		AND ISNULL(C.DEPT_ID,@cLocId)=@cLocId AND ISNULL(D.ENABLE_BIN,0)=1
+		UNION 
+		SELECT '000' AS BIN_ID,'DEFAULT BIN' AS BIN_NAME,'DB' AS BIN_ALIAS,@CWHERE AS [USER_CODE] ,'000' AS MAJOR_BIN_ID
+		FROM LOCATION (NOLOCK) WHERE DEPT_ID=@cLocId AND ISNULL(ENABLE_BIN,0)=0
+		
+	END
+
+GOTO LAST    
+
+LBLCOLUMNLIST:
+	SELECT * FROM wow_map_Columns WHERE tablename = @CWHERE
+GOTO LAST
+
+LBLCMLISTSUMMARY:
+--;WITH ALL_BIN
+--AS
+--(
+--	SELECT MEMO_ID,'' AS BIN_ID,'ALL BIN' BIN_NAME,NULL rack_category_code,null maxStock,SUM(QUANTITY) AS Quantity 
+--	FROM GRN_PS_DET A (NOLOCK) 
+--	WHERE MEMO_ID=@CWHERE 
+--	GROUP BY MEMO_ID
+--),
+;WITH BINs
+AS
+(
+--select * from Bin
+--select * from rack_management_category_config
+--SP_COLUMNS null,null,null,'rack_category_code',null
+--select * from loc_delivery_racks
+	SELECT cm_id,A.BIN_ID as rackID,BIN_NAME,B.rack_category_code,B.maxStock, SUM(QUANTITY) AS Quantity,B.major_bin_id as zoneID,SUM(ISNULL(PMT.quantity_in_stock,0)) AS quantityInStock
+	FROM cmd01106 A (NOLOCK) 
+	JOIN BIN B (NOLOCK) ON B.BIN_ID=A.BIN_ID
+	LEFT OUTER JOIN PMT01106 PMT(NOLOCK) ON PMT.BIN_ID=A.BIN_ID AND PMT.DEPT_ID=LEFT(@CWHERE,2) AND A.PRODUCT_CODE=PMT.product_code
+	WHERE CM_ID=@CWHERE 
+	GROUP BY CM_ID,A.BIN_ID,B.BIN_NAME,B.rack_category_code,B.maxStock,B.major_bin_id
+	--UNION ALL
+	--SELECT MEMO_ID,BIN_ID,BIN_NAME,rack_category_code,maxStock, Quantity 
+	--FROM ALL_BIN
+),
+BIN_CAT
+AS
+(
+	SELECT A.SECTION_CODE as rack_category_code,A.SECTION_NAME as categoryName
+	FROM sectionM A
+	JOIN rack_management_category_config B ON 1=1
+	WHERE baseTable='SectionM'AND selected = 1
+	UNION ALL
+	SELECT SUB_SECTION_CODE as rack_category_code,SUB_SECTION_NAME as categoryName
+	FROM sectiond A
+	JOIN rack_management_category_config B ON 1=1
+	WHERE baseTable='SectionD'AND selected = 1
+
+),
+BIN_ZONE
+AS
+(
+	Select  z.bin_id as zoneId,z.bin_name  as Zone
+	From  bin z 
+	where  z.major_bin_id = z.BIN_ID  and z.rack_bin =1 
+)
+SELECT A.CM_ID as cmId,A.CM_NO AS cmNo,A.CM_DT AS cmDt,A.CANCELLED as cancelled,A.REMARKS AS Remarks,
+A.ref_no AS refNo,X.BIN_NAME as binName,X.Quantity,X.rackId,
+X.rack_category_code,X.maxStock,bc.categoryName,Z.Zone,Z.zoneID,X.quantityInStock,A.NET_AMOUNT as netAmount
+,LTRIM(RTRIM((B.CUSTOMER_FNAME+' '+B.CUSTOMER_LNAME))) AS customerName,B.Mobile
+FROM CMM01106 A (NOLOCK)
+JOIN BINS X ON X.cm_id=A.cm_id
+JOIN CUSTDYM B  (NOLOCK) ON B.CUSTOMER_CODE=A.CUSTOMER_CODE     
+LEFT OUTER JOIN BIN_ZONE z on X.zoneid= z.zoneId
+LEFT OUTER JOIN BIN_CAT BC ON BC.rack_category_code=X.rack_category_code
+
+
+GOTO LAST
+
+LBLCMRACKDETAIL:
+
+CREATE TABLE #IMGDETAIL(PRODUCT_CODE VARCHAR(100),barcode_img_id VARCHAR(100),PROD_IMAGE VARBINARY(MAX),PROD_IMAGE_BASE64 NVARCHAR(MAX))
+
+INSERT INTO #IMGDETAIL(PRODUCT_CODE ,barcode_img_id,PROD_IMAGE,PROD_IMAGE_BASE64	)
+SELECT A.PRODUCT_CODE,S.barcode_img_id,NULL,NULL
+FROM CMD01106 A (NOLOCK)        
+JOIN SKU_NAMES S (NOLOCK)  ON A.PRODUCT_CODE = S.PRODUCT_CODE      
+WHERE A.CM_ID =@CWHERE    AND (A.BIN_ID=@cBINId OR ISNULL(@cBINId,'')='')
+
+IF DB_ID(@cDBNAME) IS NOT NULL
+BEGIN
+	SET @CCMD=N' UPDATE A SET A.PROD_IMAGE=B.PROD_IMAGE	,A.PROD_IMAGE_BASE64=CAST(N'''' AS XML).value(
+          ''xs:base64Binary(xs:hexBinary(sql:column("B.PROD_IMAGE")))''
+        , ''NVARCHAR(MAX)''
+    )
+		FROM #IMGDETAIL A
+		LEFT OUTER JOIN '+@cDBNAME+'..IMAGE_INFO B (NOLOCK) ON B.IMG_ID=A.barcode_img_id'
+	PRINT @cCMD
+	EXEC SP_EXECUTESQL @CCMD
+END
+
+SELECT  A.*,     
+S.SN_Uom_type uomType,  S.ARTICLE_NO as articleNo, S.ARTICLE_NAME AS articleName,  S.PARA1_NAME AS para1Name, S.PARA2_NAME AS para2Name, S.UOM uomName, I.AC_CODE,    
+S.SUB_SECTION_NAME AS subSectionName, S.basic_purchase_price purchasePrice,     
+S.PARA3_NAME AS para3Name, LTRIM(RTRIM((I.CUSTOMER_FNAME+' '+I.CUSTOMER_LNAME))) AS customerName, S.SECTION_NAME sectionName, S.MRP,S.WS_PRICE AS WSP, S.sn_barcode_coding_scheme codingScheme, '' AS BRAND_NAME,     
+S.PARA4_NAME AS para4Name, S.PARA5_NAME AS para5Name, S.PARA6_NAME AS para6Name, A.QUANTITY Quantity ,S.FIX_MRP AS fixMrp,  
+S.sku_er_flag erFlag,S.STOCK_NA AS stockNa,S.ARTICLE_ALIAS AS articleAlias,
+ CAST(CASE WHEN CHARINDEX('@',A.PRODUCT_CODE)=0 THEN '' ELSE 
+(SUBSTRING(A.PRODUCT_CODE,CHARINDEX('@',A.PRODUCT_CODE)+1,15)) END  AS VARCHAR(100)) AS batchLotNo,
+   S.BATCH_NO batchNo,S.EXPIRY_DT expiryDt ,ISNULL(BIN.BIN_NAME,'') AS binName,IMG.barcode_img_id,IMG.PROD_IMAGE,IMG.PROD_IMAGE_BASE64
+FROM cmd01106 A (NOLOCK)        
+JOIN cmm01106 A1 (NOLOCK) ON A1.CM_ID=A.CM_ID
+JOIN SKU_NAMES S (NOLOCK)  ON A.PRODUCT_CODE = S.PRODUCT_CODE      
+JOIN custdym I (NOLOCK)  ON A1.CUSTOMER_CODE = I.customer_code
+LEFT OUTER JOIN BIN (NOLOCK) ON BIN.BIN_ID=A.BIN_ID      
+LEFT OUTER JOIN #IMGDETAIL IMG (NOLOCK) ON IMG.PRODUCT_CODE=A.PRODUCT_CODE
+WHERE A.CM_ID =@CWHERE    AND (A.BIN_ID=@cBINId OR ISNULL(@cBINId,'')='')
+GOTO LAST
+
+LBLCMLIST:
+
+	IF OBJECT_ID('TEMPDB..#CMMLIST','U') IS NOT NULL
+		DROP TABLE #CMMLIST
+
+	IF OBJECT_ID('TEMPDB..#PaymodeList','U') IS NOT NULL
+		DROP TABLE #PaymodeList
+
+	SELECT CM_ID INTO #CMMLIST FROM CMM01106
+	WHERE cm_DT BETWEEN @dtFrom AND @dtTo
+
+	select memo_id,STRING_AGG(ISNULL(b.paymode_name, ' ')+'('+CONVERT(VARCHAR(20),a.amount)+')', ', ')  as paymode
+	INTO #PaymodeList
+	from paymode_xn_det a
+	JOIN paymode_mst B on B.paymode_code=a.paymode_code
+	JOIN paymode_grp_mst C ON c.paymode_grp_code=B.paymode_grp_code
+	WHERE a.xn_type='SLS'
+	GROUP BY memo_id
+
+	SELECT A.CM_ID as cmId,A.CM_NO AS cmNo,A.CM_DT AS cmDt,A.cm_time as cmTime, A.CANCELLED as cancelled,A.REMARKS AS Remarks,A.TOTAL_QUANTITY as totalQuantity,
+	A.ref_no AS refNo,a.LAST_UPDATE as lastUpdate
+	,A.CUSTOMER_CODE as customerCode
+	,I.CUSTOMER_FNAME+' '+I.CUSTOMER_LNAME AS CUSTOMER_NAME,I.mobile,A.NET_AMOUNT as totalAmount,
+	U.username AS createdBy,U1.username AS lastEditedBy,A.atd_charges AS otherCharges,A.total_mrp_value as totalMrpValue,
+	A.Total_discount as totalDiscountAmount
+	,A.Total_discount/(CASE WHEN ISNULL(A.total_mrp_value,0)=0 THEN 1 ELSE  A.total_mrp_value END) as totalDiscountPercentage,A.total_gst_amount as totalGstAmount
+	,A.Party_Gst_No as partyGstNo,GST.gst_state_name as partyGstState,PM.paymode,(CASE WHEN A.DELIVERY_MODE=1 THEN 'By Courier' ELSE 'At Store' END ) AS deliveryMode
+	FROM CMM01106 A (NOLOCK)
+	JOIN #CMMLIST LIST ON LIST.cm_id=A.cm_id
+	LEFT OUTER JOIN #PaymodeList PM ON PM.memo_id=A.cm_id
+	JOIN custdym I (NOLOCK)  ON A.CUSTOMER_CODE = I.customer_code
+	JOIN users U (NOLOCK)  ON U.user_code = A.USER_CODE
+	JOIN gst_state_mst GST (NOLOCK) ON GST.gst_state_code=A.party_state_code
+	LEFT OUTER JOIN users U1 (NOLOCK)  ON U1.user_code = A.edt_user_code
+	--WHERE cm_DT BETWEEN @dtFrom AND @dtTo
+
+	SELECT COUNT(*) AS totalBills,SUM(TOTAL_QUANTITY) AS totalQuantity,SUM(NET_AMOUNT) as totalAmount 
+	FROM CMM01106 a
+	JOIN #CMMLIST B On B.cm_id=a.cm_id
+GOTO LAST
+
+LBLCUSTOMERSLOV:    
+	SELECT  A.customer_code as customerCode, LTRIM(RTRIM((A.CUSTOMER_FNAME+' '+A.CUSTOMER_LNAME))) as customerName, 
+	A.ADDRESS1 + ' ' + A.ADDRESS2 + ', ' + AR.AREA_NAME + ' ' + CI.CITY + ' ' +       
+	ST.STATE AS 'custAddress'
+	FROM CUSTDYM A(NOLOCK)       
+			  LEFT OUTER JOIN AREA AR  (NOLOCK) ON AR.AREA_CODE=A.AREA_CODE      
+		  LEFT OUTER JOIN CITY CI  (NOLOCK) ON CI.CITY_CODE=AR.CITY_CODE      
+		  LEFT OUTER JOIN STATE ST  (NOLOCK) ON ST.STATE_CODE=CI.STATE_CODE           
+	WHERE A.INACTIVE = 0 
+	ORDER BY 2
+
+GOTO LAST    
+
+LBLGETMST:   
+
+;WITH CMD
+AS
+(
+	SELECT CM_ID,SUM(CASE WHEN QUANTITY>0 THEN QUANTITY ELSE 0 END) AS SOLD_QTY,SUM(CASE WHEN QUANTITY<0 THEN QUANTITY ELSE 0 END) AS RETURN_QTY
+	,MAX(E1.EMP_NAME) AS EMP_NAME,MAX(E2.EMP_NAME) AS EMP_NAME1,MAX(E3.EMP_NAME) AS EMP_NAME2
+	FROM CMD01106 A (NOLOCK)
+	JOIN employee E1 (NOLOCK) ON E1.emp_code=A.emp_code
+	JOIN employee E2 (NOLOCK) ON E2.emp_code=A.emp_code1
+	JOIN employee E3 (NOLOCK) ON E3.emp_code=A.emp_code2
+	WHERE CM_ID=@CWHERE  
+	GROUP BY CM_ID
+)
+,CUSTOMER
+AS
+(
+	SELECT A.CUSTOMER_CODE, USER_CUSTOMER_CODE, ISNULL(prx.prefix_name,'') AS CUSTOMER_TITLE, CUSTOMER_FNAME, CUSTOMER_LNAME,     
+  ISNULL(ST.STATE,'') AS [STATE],ADDRESS1, ADDRESS2,ISNULL(AR.AREA_NAME,'') AS  AREA,    
+  ISNULL(CI.CITY,'') AS CITY,ISNULL(AR.PINCODE,'') AS PINCODE, PHONE1,     
+  PHONE2, MOBILE, EMAIL,A.AREA_CODE,ADDRESS9,A.CARD_NO,A.INACTIVE ,A.Privilege_customer,
+  A.DT_CARD_ISSUE,A.DT_CARD_EXPIRY,  A.dt_birth,A.flat_disc_customer,A.ref_customer_code,A.location_id,
+  bm.card_name as discounted_card_type,A.flat_disc_percentage,A.dt_anniversary,
+  isnull(not_downloaded_from_wizclip,0) AS not_downloaded_from_wizclip,ST.STATE_CODE,
+  A.CUS_GST_STATE_CODE,GST.GST_STATE_NAME,A.CUS_GST_NO,A.Form_no,A.card_code,
+  ISNULL(prx.prefix_name,'') +' '+ CUSTOMER_FNAME+' '+ CUSTOMER_LNAME AS CUSTOMER_NAME
+  ,(CASE WHEN A.DT_BIRTH='' THEN '' ELSE CONVERT(VARCHAR(20),A.DT_BIRTH ,105) END) AS DOB
+  ,(CASE WHEN A.dt_anniversary='' THEN '' ELSE CONVERT(VARCHAR(20),A.dt_anniversary ,105) END) AS DOA
+  ,CAST(0 AS INT) AS total_visits
+  ,(CASE WHEN ''='' THEN '' ELSE CONVERT(VARCHAR(20),CAST('' AS DATETIME) ,105) END) AS FIRST_VISIT
+  ,(CASE WHEN ''='' THEN '' ELSE CONVERT(VARCHAR(20),CAST('' AS DATETIME) ,105) END) AS LAST_VISIT
+  ,(CASE WHEN A.inactive=1 THEN 'InActive' ELSE 'Active' END) AS [STATUS]
+  ,(CASE WHEN A.DT_CARD_EXPIRY='' THEN '' 
+		 WHEN DATEDIFF(d,A.DT_CARD_EXPIRY,GETDATE())>0 
+		 THEN 'InActive, Expire On :'+CONVERT(VARCHAR(20),A.DT_CARD_EXPIRY,105) 
+		 ELSE 'Active, Expire On :'+CONVERT(VARCHAR(20),A.DT_CARD_EXPIRY,105) END) AS [CARD_STATUS]
+		 		 ,ISNULL(A.BILL_BY_BILL,0) AS BILL_BY_BILL,A.custdym_export_gst_percentage_Applicable,A.custdym_export_gst_percentage
+				 ,ISNULL(International_customer,0) AS International_customer 
+  FROM CUSTDYM A   (NOLOCK)
+  JOIN
+  (
+	SELECT CUSTOMER_CODE FROM CMM01106 WHERE CM_ID=@CWHERE
+  )CMM	ON CMM.CUSTOMER_CODE=A.customer_code
+  LEFT OUTER JOIN prefix prx (NOLOCK) ON prx.prefix_code=A.prefix_code
+  LEFT OUTER JOIN AREA AR  (NOLOCK) ON AR.AREA_CODE=A.AREA_CODE    
+  LEFT OUTER JOIN CITY CI  (NOLOCK) ON CI.CITY_CODE=AR.CITY_CODE    
+  LEFT OUTER JOIN STATE ST  (NOLOCK) ON ST.STATE_CODE=CI.STATE_CODE
+  LEFT OUTER JOIN GST_STATE_MST GST  (NOLOCK) ON A.CUS_GST_STATE_CODE=GST.GST_STATE_CODE
+  LEFT OUTER JOIN BWD_MST bm on bm.MEMO_ID=a.card_code
+
+)
+SELECT  USERS.USERNAME as userName, 
+--LTRIM(RTRIM((C.CUSTOMER_FNAME+' '+C.customer_lname))) AS customerName,     
+--LTRIM(RTRIM((C.ADDRESS1 + ' ' + C.ADDRESS2 + ', ' + AR.AREA_NAME + ' ' + CI.CITY + ' ' + ST.STATE))) AS 'custAddress',    
+MST.*,EDTUSR.username as EDT_USERNAME,CMD.SOLD_QTY,CMD.RETURN_QTY,CMD.EMP_NAME,CMD.EMP_NAME1,CMD.EMP_NAME2, CAST( '' AS VARCHAR(50)) SP_ID 
+,C.*
+FROM CMM01106 MST (NOLOCK) 
+JOIN CMD ON CMD.CM_ID=MST.CM_ID
+JOIN USERS (NOLOCK)  ON MST.USER_CODE = USERS.USER_CODE     
+JOIN CUSTOMER C(NOLOCK) ON MST.CUSTOMER_CODE = C.CUSTOMER_CODE  
+LEFT OUTER JOIN AREA AR  (NOLOCK) ON AR.AREA_CODE=C.AREA_CODE      
+LEFT OUTER JOIN CITY CI  (NOLOCK) ON CI.CITY_CODE=AR.CITY_CODE      
+LEFT OUTER JOIN STATE ST  (NOLOCK) ON ST.STATE_CODE=CI.STATE_CODE           
+LEFT OUTER JOIN USERS EDTUSR(NOLOCK)  ON MST.EDT_USER_CODE = EDTUSR.USER_CODE     
+WHERE MST.CM_ID  =@CWHERE    
+
+GOTO LAST    
+
+LBLGETDETAILS:    
+
+SELECT  A.*,  S.SN_Uom_type UOM_TYPE,  S.ARTICLE_NO, S.ARTICLE_NAME,  S.PARA1_NAME, S.PARA2_NAME, S.UOM UOM_NAME, 
+S.SUB_SECTION_NAME, S.basic_purchase_price PURCHASE_PRICE,     
+S.PARA3_NAME,  S.SECTION_NAME, S.MRP,S.WS_PRICE AS WSP, S.sn_barcode_coding_scheme CODING_SCHEME, '' AS BRAND_NAME,     
+S.PARA4_NAME, S.PARA5_NAME, S.PARA6_NAME, A.QUANTITY ,CAST( '' AS VARCHAR(50)) SP_ID,S.FIX_MRP,  S.sku_er_flag ER_FLAG,S.STOCK_NA,S.ARTICLE_ALIAS,
+A.PRODUCT_CODE AS ORG_PRODUCT_CODE, 
+ CAST(CASE WHEN CHARINDEX('@',A.PRODUCT_CODE)=0 THEN '' ELSE 
+(SUBSTRING(A.PRODUCT_CODE,CHARINDEX('@',A.PRODUCT_CODE)+1,15)) END  AS VARCHAR(100)) AS BATCH_LOT_NO,
+   S.BATCH_NO,S.EXPIRY_DT ,ISNULL(BIN.BIN_NAME,'') AS BIN_NAME
+FROM CMD01106 A (NOLOCK)        
+JOIN CMM01106 B (NOLOCK) ON A.CM_ID  = B.CM_ID         
+JOIN SKU_NAMES S (NOLOCK)  ON A.PRODUCT_CODE = S.PRODUCT_CODE      
+LEFT OUTER JOIN BIN (NOLOCK) ON BIN.BIN_ID=A.BIN_ID          
+WHERE A.CM_ID=@CWHERE          
+GOTO LAST 
+
+LBLPAYMENTDET:
+	SELECT A.*,B.PAYMODE_NAME,C.* ,CAST(0 AS BIT ) AS DELETED,      
+  (CASE WHEN A.CURRENCY_CONVERSION_RATE> 0 THEN     
+  CAST(A.AMOUNT/A.CURRENCY_CONVERSION_RATE AS NUMERIC(10,2)) ELSE A.AMOUNT END ) AS BASIC_AMOUNT,
+  ISNULL(S.CM_DT,ISNULL(R.ADV_REC_DT,'')) AS ADJ_MEMO_DT ,CAST('' AS VARCHAR(40))AS  SP_ID
+  FROM PAYMODE_XN_DET A  (NOLOCK)   
+  JOIN PAYMODE_MST B (NOLOCK) ON B.PAYMODE_CODE=A.PAYMODE_CODE      
+  JOIN PAYMODE_GRP_MST C (NOLOCK) ON C.PAYMODE_GRP_CODE=B.PAYMODE_GRP_CODE      
+  LEFT OUTER JOIN CMM01106 S (NOLOCK) ON S.CM_ID=A.ADJ_MEMO_ID AND SUBSTRING(S.CM_NO,5,1)='N'
+  LEFT OUTER JOIN ARC01106 R (NOLOCK) ON R.ADV_REC_ID=A.ADJ_MEMO_ID AND R.ARC_TYPE=2  
+  WHERE A.XN_TYPE ='SLS' AND A.MEMO_ID=@CWHERE
+  
+GOTO LAST
+LBLBILLSUMMARY:
+	;WITH SOLD
+	AS
+	(
+		SELECT SUM(NET) AS soldNet,SUM(discount_percentage) soldDiscountPercentage,
+		SUM(discount_amount) AS soldDiscountAmount,SUM(cmm_discount_amount) AS soldCmmDiscountAmount,SUM(gst_percentage) AS soldGstPercentage,
+		SUM(xn_value_without_gst) AS soldXnValueWithoutGst,SUM(xn_value_with_gst ) AS soldXnValueWithGst ,SUM(igst_amount) AS soldIgstAmount,
+		SUM(cgst_amount) AS soldCgstAmount,SUM(sgst_amount) AS soldSgstAmount,SUM(basic_discount_amount) AS soldBasicDiscountAmount,
+		SUM(basic_discount_percentage) AS soldBasicDiscountPercentage,SUM(Gst_Cess_Amount) AS soldGstCessAmount,SUM(Gst_Cess_Percentage) AS soldGstCessPercentage
+		,SUM(MRP*QUANTITY) AS soldMrpValue
+		FROM CMD01106
+		WHERE QUANTITY>0 AND  CM_ID=@CWHERE
+		--GROUP BY CM_ID
+	)
+	,RETURNED
+	AS
+	(
+		SELECT SUM(NET) AS retNet,SUM(discount_percentage) retDiscountPercentage,
+		SUM(discount_amount) AS retDiscountAmount,SUM(cmm_discount_amount) AS retCmmDiscountAmount,SUM(gst_percentage) AS retGstPercentage,
+		SUM(xn_value_without_gst) AS retXnValueWithoutGst,SUM(xn_value_with_gst ) AS retXnValueWithGst ,SUM(igst_amount) AS retIgstAmount,
+		SUM(cgst_amount) AS retCgstAmount,SUM(sgst_amount) AS retSgstAmount,SUM(basic_discount_amount) AS retBasicDiscountAmount,
+		SUM(basic_discount_percentage) AS retBasicDiscountPercentage,SUM(Gst_Cess_Amount) AS retGstCessAmount,SUM(Gst_Cess_Percentage) AS retGstCessPercentage
+		,SUM(MRP*QUANTITY) AS retMrpValue
+		FROM CMD01106
+		WHERE QUANTITY<0 AND  CM_ID=@CWHERE
+		
+	)
+	SELECT cmId=@CWHERE,* FROM
+	SOLD,RETURNED
+GOTO LAST    
+
+
+LAST:    
+END

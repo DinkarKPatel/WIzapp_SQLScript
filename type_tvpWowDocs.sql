@@ -1,0 +1,1 @@
+create type tvpWowDocs as table (xn_type varchar(100),memo_id varchar(50),img_id varchar(50),doc_image varbinary(max),fileName varchar(200),deleted BIT) 

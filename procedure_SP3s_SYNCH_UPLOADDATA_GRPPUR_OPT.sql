@@ -1,0 +1,105 @@
+create PROCEDURE SP3s_SYNCH_UPLOADDATA_GRPPUR_OPT
+    @nSpId VARCHAR(40),
+    @CERRMSG VARCHAR(MAX) OUTPUT
+
+AS
+
+BEGIN
+	DECLARE @CSTEP VARCHAR(100),@CMEMOID VARCHAR(40),@CFILTERCONDITION VARCHAR(300),@BAddmode bit,
+	        @bCancelled bit,@NXNITEMTYPE int ,@dreceipt_dt dateTime,@cinv_id varchar(50),@cReceipt_at_Loc_No varchar(20)
+	PRINT 'START INSERT PIM01106 OF GROUP'+@nSpId
+BEGIN TRY
+	
+	
+	SET @CSTEP=10
+LBLSTART:
+    
+    BEGIN TRANSACTION
+
+
+	
+	
+    
+    SELECT @CMEMOID='',@BAddmode=1,@CERRMSG=''
+    
+    SELECT TOP 1 @CMEMOID = MRR_ID ,@bCancelled=CANCELLED ,@NXNITEMTYPE=XN_ITEM_TYPE,@dreceipt_dt=receipt_dt ,@cinv_id =inv_id,
+                 @cReceipt_at_Loc_No=mrr_no 
+	FROM PUR_PIM01106_UPLOAD  (NOLOCK)	WHERE sp_id=@nSpId
+    
+    IF ISNULL(@CMEMOID,'')=''
+		GOTO EXIT_PROC
+	
+	
+    SET @CFILTERCONDITION = 'B.SP_ID='''+@nSpId+''''
+	
+	IF EXISTS (SELECT TOP 1 mrr_id FROM pim01106 (NOLOCK) WHERE mrr_id=@cMemoId)
+		SET @BAddmode=0
+
+	SET @CSTEP=20
+	
+	PRINT 'INSERT PIM01106 OF GROUP'
+	---UPDATING TRANSACTION TABLES
+	EXEC UPDATEMASTERXN_OPT @CSOURCEDB='',@CSOURCETABLE='PUR_PIM01106_UPLOAD',@CDESTDB=''
+							  ,@CDESTTABLE='PIM01106',@CKEYFIELD1='mrr_id',@CKEYFIELD2='',@CKEYFIELD3=''
+							  ,@LINSERTONLY=@BAddmode,@CFILTERCONDITION=@CFILTERCONDITION,@LUPDATEONLY=0
+							  ,@BALWAYSUPDATE=1,@lUPDATEXNS=@BAddmode 
+	
+	PRINT 'INSERT PIM01106 OF GROUP-2'
+	SET @CSTEP=25
+	EXEC SP3S_MERGE_LOCPMT  
+	@cTempTable='PUR_PMT01106_UPLOAD',  
+	@cMemoIdCol='SP_ID',  
+	@cMemoId =@nSpId
+
+
+	EXEC SP3S_UPD_SKUXFPNEW 'PUR',@CMEMOID,0
+
+	----- Pid01106 now onwards won't get merged as discussed with Sir for Cobb heavy Data (05-02-2020)
+lblFinal:
+	
+	--if @@spid=53
+	--	select b.* From ind01106 a join pmt01106 b on a.PRODUCT_CODE=b.product_code
+	--	where inv_id='010112300000001-000018' and quantity_in_stock>0
+
+	SET @CSTEP=40    		
+	DELETE A FROM PUR_PIM01106_UPLOAD A WITH (ROWLOCK) WHERE sp_id=@nSpId
+	DELETE A FROM PUR_PMT01106_UPLOAD A (ROWLOCK) WHERE sp_id=@nSpId
+
+
+	--IF GROUP PURCHSE CANCELLED THE CHALLAN SHOW IN GIT 
+	UPDATE INM SET doc_synch_last_update =''
+	FROM PIM01106 A (NOLOCK) 
+	JOIN INM01106 INM (NOLOCK) ON A.INV_ID =INM.INV_ID 
+	WHERE A.MRR_ID =@CMEMOID 
+	AND A.CANCELLED =1 
+
+	if @NXNITEMTYPE =5
+	begin
+	   
+	    UPDATE B SET Receipt_at_Loc_Dt=@dreceipt_dt,Receipt_at_Loc_No=@cReceipt_at_Loc_No
+        FROM IND01106 A (NOLOCK)
+		join inm01106 inm (nolock) on a.inv_id =inm.inv_id 
+        JOIN hold_back_deliver_det B (NOLOCK) ON A.PRODUCT_CODE=B.PRODUCT_CODE
+        WHERE A.INV_ID =@cinv_id and inm.CANCELLED =0
+
+
+	end
+	
+END TRY
+BEGIN CATCH
+	SET @CERRMSG='P:SP3s_SYNCH_UPLOADDATA_GRPPUR_OPT, MEMO ID :'+@CMEMOID+' STEP:'+@CSTEP+', MESSAGE:'+ERROR_MESSAGE()
+	GOTO EXIT_PROC
+END CATCH
+
+EXIT_PROC:
+
+	IF @@TRANCOUNT>0
+	BEGIN
+		IF ISNULL(@CERRMSG,'')='' 
+			commit
+		ELSE
+			ROLLBACK
+    END
+	
+END	
+---END OF PROCEDURE - SP_SYNCH_UPLOADDATA_GRPPUR_OPT

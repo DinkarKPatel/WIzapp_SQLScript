@@ -1,0 +1,116 @@
+create PROCEDURE SP3S_VALIDATE_ENFORCE_JOB
+(
+ @CMEMO_ID VARCHAR(100)='',
+ @CERRORMSG VARCHAR(100) OUTPUT
+)
+AS
+BEGIN  
+    
+    DECLARE @NSTEP int
+    SET @NSTEP=00
+   
+ BEGIN TRY   
+    set @CERRORMSG=''
+    
+   
+    IF OBJECT_ID ('TEMPDB..#TMPPRODUCT','U') IS NOT NULL
+       DROP TABLE #TMPPRODUCT
+       
+    SELECT DISTINCT  A.product_code,left(a.receipt_id,2) as dept_id,a.BIN_ID  
+    INTO #TMPPRODUCT FROM jobwork_receipt_det A
+    WHERE A.receipt_id  =@CMEMO_ID
+    
+   IF EXISTS( SELECT TOP 1 A.receipt_id   
+    FROM jobwork_receipt_det A (NOLOCK) 
+    JOIN jobwork_receipt_mst B (NOLOCK) ON A.receipt_id =B.receipt_id 
+    JOIN #TMPPRODUCT P ON A.product_code =P.product_code 
+    WHERE B.CANCELLED=0  AND ISNULL(B.Receive_Mode,0)=1
+    AND A.receipt_id >@CMEMO_ID)
+    BEGIN
+        SET @CERRORMSG='1.Next Jobwork has been Processed can not cancelled '
+        RETURN
+    
+    END
+    
+
+    
+   
+    IF EXISTS (SELECT TOP 1 'U' FROM #TMPPRODUCT A
+    JOIN TRANSFER_TO_TRADING_DET B (NOLOCK) ON A.product_code =B.PRODUCT_CODE 
+    JOIN TRANSFER_TO_TRADING_MST  C (NOLOCK) ON B.MEMO_ID  =C.MEMO_ID 
+    WHERE C.CANCELLED =0 )
+    BEGIN
+        SET @CERRORMSG='BARCODE FOUND IN TRADINING CAN NOT CANCELLED '
+        RETURN
+    
+    END
+    
+     
+    IF OBJECT_ID ('TEMPDB..#TMPFINAL','U') IS NOT NULL
+       DROP TABLE #TMPFINAL
+       
+       
+       SELECT  PRODUCT_CODE ,JOB_CODE 
+       INTO #TMPFINAL
+       FROM JOBWORK_RECEIPT_DET (NOLOCK)
+       WHERE RECEIPT_ID =@CMEMO_ID
+       
+     
+       IF OBJECT_ID ('TEMPDB..#TMPCURJOB','U') IS NOT NULL
+       DROP TABLE #TMPCURJOB
+       
+       
+       SELECT MST.MEMO_ID , A.PRODUCT_CODE , C.ARTICLE_CODE,MX.JOB_CODE,JOB_ORDER 
+       into #TMPCURJOB
+	   FROM #TMPFINAL A
+	   JOIN ORD_PLAN_BARCODE_DET B (NOLOCK) ON A.PRODUCT_CODE =B.PRODUCT_CODE 
+	   JOIN ORD_PLAN_DET C  (NOLOCK) ON B.REFROW_ID=C.ROW_ID 
+	   JOIN ORD_PLAN_MST MST (NOLOCK) ON C.MEMO_ID =MST.MEMO_ID  
+	   JOIN ORD_PLAN_JOB MX (nolock) on MST.MEMO_ID=MX.MEMO_ID AND C.ARTICLE_CODE =MX.ARTICLE_CODE 
+	   AND A.JOB_CODE =MX.JOB_CODE 
+	   WHERE ISNULL(ENFORCE_JOB_ORDER,0)=1
+	   
+	
+	   
+	   IF EXISTS (SELECT TOP 1 'U' FROM #TMPFINAL)
+	   BEGIN
+	        
+	        
+	        DECLARE @CJOB_NAME VARCHAR(100)
+	        
+	        SELECT TOP 1 @CJOB_NAME=JOBS.JOB_NAME  FROM #TMPCURJOB A
+	        JOIN ORD_PLAN_JOB B (NOLOCK) ON A.ARTICLE_CODE  =B.ARTICLE_CODE   AND A.MEMO_ID =B.MEMO_ID 
+	        AND B.JOB_ORDER>A.JOB_ORDER 
+	        JOIN JOBWORK_ISSUE_DET C (NOLOCK) ON C.PRODUCT_CODE =A.PRODUCT_CODE AND B.JOB_CODE =C.JOB_CODE 
+	        JOIN JOBWORK_ISSUE_MST D (NOLOCK) ON C.ISSUE_ID=D.ISSUE_ID
+	        JOIN JOBS (NOLOCK) ON JOBS.JOB_CODE =B.JOB_CODE
+	        WHERE D.CANCELLED =0
+	        
+	        
+	        IF ISNULL(@CJOB_NAME,'')<>''
+	        BEGIN
+	            
+	            SET @CERRORMSG=@CJOB_NAME+' NEXT JOB HAS BEEN ISSUED   CAN NOT CANCEL. enforce job'
+	            goto END_PROC
+	         
+	        END
+	     
+	   
+	   END
+	   
+	   
+	   
+	    
+	    
+ END TRY  
+ BEGIN CATCH  
+  SET @CERRORMSG = 'STEP- ' + LTRIM(STR(@NSTEP)) + ' SQL ERROR: #' + LTRIM(STR(ERROR_NUMBER())) + ' ' + ERROR_MESSAGE()  
+  GOTO END_PROC  
+ END CATCH  
+   
+END_PROC:  	
+	
+  
+    
+
+END

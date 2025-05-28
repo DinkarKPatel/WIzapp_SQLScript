@@ -1,0 +1,1 @@
+create type tvpActiveBarCodeschemes as table (schemeRowId VARCHAR(50))

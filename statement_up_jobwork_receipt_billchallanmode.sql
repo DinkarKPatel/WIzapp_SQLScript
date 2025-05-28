@@ -1,0 +1,1 @@
+UPDATE jobwork_receipt_mst set bill_challan_mode=0 where ISNULL(bill_challan_mode,2)=2

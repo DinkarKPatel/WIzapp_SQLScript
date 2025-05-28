@@ -1,0 +1,13 @@
+CREATE PROCEDURE SP3S_CHECK_BACKUP_ON_CLOUD
+AS
+BEGIN
+	DECLARE @bFound BIT=0
+	IF EXISTS(select NAME from master.sys.tables where name='CLOUDBACKUP_LOG')
+	BEGIN
+		IF (select COUNT(*) from master..CLOUDBACKUP_LOG(NOLOCK))>0
+		BEGIN
+			SET @bFound=1
+		END
+	END
+	SELECT @bFound AS [FOUND]
+END

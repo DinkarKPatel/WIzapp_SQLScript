@@ -1,0 +1,200 @@
+create PROCEDURE SP3S_RECON_DETAILS
+(
+	 @CMEMO_ID VARCHAR(20)
+	,@NMODE NUMERIC(1)
+	,@CFIN_YEAR VARCHAR(10)='',
+	@nsp_id int=0
+)	
+--WITH ENCRYPTION
+AS
+BEGIN
+
+IF @NMODE=1
+	GOTO LBL_RETURNSUMMARY
+IF @NMODE=2
+	GOTO LBL_RETURNDETAILS
+IF @NMODE=3
+	GOTO LBL_EXCESSELIST
+IF @NMODE=4
+	GOTO LBL_SHORTAGELIST
+ELSE 
+	GOTO END_PROC	
+
+LBL_RETURNSUMMARY:
+	SELECT   SCAN_QTY 
+			,SHORTAGE_QTY 
+			,EXCESS_QTY 
+	FROM STK_RECON_HIST_MST
+	WHERE RECON_ID=@CMEMO_ID
+GOTO END_PROC
+
+LBL_RETURNDETAILS:
+	SELECT  PRODUCT_CODE
+		   ,COMPUTER_QTY
+		   ,COMPUTER_AMOUNT
+		   ,SCAN_QTY
+		   ,SCAN_AMT
+		   ,SHORTAGE_QTY
+		   ,SHORTAGE_AMT
+		   ,EXCESS_QTY
+		   ,EXCESS_AMT
+	FROM STK_RECON_HIST_DET
+	WHERE RECON_ID=@CMEMO_ID
+GOTO END_PROC
+
+LBL_EXCESSELIST:
+IF EXISTS (SELECT TOP 1 'U' FROM icm01106  WHERE RECON_ID =@CMEMO_ID AND CNC_TYPE=2 AND cancelled =0)
+BEGIN
+	SELECT 'RECON HAS BEEN ALREADY USED IN UN CANCELLETION' AS ERRMSG
+	RETURN
+END
+
+   SELECT 'LATER' AS  CNC_MEMO_NO,
+          CONVERT(VARCHAR(10),GETDATE(),121) CNC_MEMO_DT,
+         0 AS CANCELLED,
+         2 AS CNC_TYPE,
+         0 AS TOTAL_AMOUNT,
+         A.DEPT_ID  AS DEPT_ID,
+         GETDATE() AS LAST_UPDATE,
+         '0000000' AS USER_CODE,
+         0 AS APPROVED,
+         0 AS SENT_TO_HO,
+         'LATER' AS CNC_MEMO_ID,
+         @CFIN_YEAR AS FIN_YEAR,
+          0 AS UPLOADED_TO_ACTIVSTREAM,
+          '' AS REF_MEMO_ID,
+         '' AS REF_XN_TYPE,
+          1 AS FROM_STOCKAUDIT,
+         '0000000' AS EDT_USER_CODE,
+         GETDATE() AS CNC_TIME,
+         0 AS STOCK_ADJ_NOTE,
+         CONVERT(VARCHAR,GETDATE(),121) AS CNC_DT,
+          0 AS RFOPT_UPDATED,
+          'AGAINST STOCK RECONCILATION RECON ID-'+A.RECON_ID+' DT-'+CONVERT (VARCHAR(10),A.RECON_START_DT,121) AS REMARKS,
+          0 AS SENT_FOR_RECON,
+          '000' AS BIN_ID,
+         '' AS TOTAL_QUANTITY_STR,
+         0 AS WIP,
+         1 AS XN_ITEM_TYPE ,
+         A.RECON_ID,
+         A.RECON_START_DT AS RECON_DT,
+         @nsp_id as sp_id
+     FROM STK_RECON_HIST_MST A
+     WHERE A.RECON_ID=@CMEMO_ID     
+         
+
+    SELECT '' AS  CNC_MEMO_NO,
+            A.PRODUCT_CODE,
+            A.EXCESS_QTY AS QUANTITY,
+            B.DEPT_ID,
+           CAST(NEWID() AS VARCHAR(100)) AS ROW_ID,
+            GETDATE() AS LAST_UPDATE,
+            'LATER' AS CNC_MEMO_ID,
+            @CFIN_YEAR AS FIN_YEAR,
+            sku.mrp  AS RATE,
+            0 AS ADJ_PERCENTAGE,
+            '000'   AS BIN_ID,
+            '' AS WIP_UID,
+    ART.article_no,SD.sub_section_name ,SM.section_name ,
+    P1.para1_name ,P2.para2_name ,P3.para3_name ,P4.para4_name ,
+    P5.para5_name ,P6.PARA6_NAME,
+    @nsp_id as sp_id
+    FROM STK_RECON_HIST_DET A (NOLOCK)
+    JOIN STK_RECON_HIST_MST  B (NOLOCK) ON A.RECON_ID =B.RECON_ID 
+    JOIN SKU (NOLOCK) ON A.PRODUCT_CODE= SKU.PRODUCT_CODE
+    JOIN ARTICLE ART (NOLOCK) ON ART.ARTICLE_CODE=SKU.ARTICLE_CODE
+    JOIN SECTIOND SD (NOLOCK) ON SD.sub_section_code =ART.sub_section_code 
+    JOIN sectionM SM (NOLOCK) ON SM.section_code =SD.section_code 
+    JOIN PARA1 P1 (NOLOCK) ON P1.para1_code =SKU.para1_code 
+    JOIN PARA2 P2 (NOLOCK) ON P2.para2_code =SKU.para2_code 
+    JOIN PARA3 P3 (NOLOCK) ON P3.para3_code =SKU.para3_code 
+    JOIN PARA4 P4 (NOLOCK) ON P4.para4_code =SKU.para4_code 
+    JOIN PARA5 P5 (NOLOCK) ON P5.para5_code =SKU.para5_code 
+    JOIN PARA6 P6 (NOLOCK) ON P6.para6_code =SKU.para6_code 
+    WHERE A.RECON_ID=@CMEMO_ID
+    AND (A.EXCESS_QTY >0 )
+   
+ 
+
+GOTO END_PROC
+
+
+LBL_SHORTAGELIST:
+    
+IF EXISTS (SELECT TOP 1 'U' FROM icm01106  WHERE RECON_ID =@CMEMO_ID AND CNC_TYPE=1 AND cancelled =0)
+BEGIN
+SELECT 'RECON HAS BEEN ALREADY USED IN CANCELLETION' AS ERRMSG
+RETURN
+END
+
+    SELECT 'LATER' AS  CNC_MEMO_NO,
+          CONVERT(VARCHAR(10),GETDATE(),121) CNC_MEMO_DT,
+         0 AS CANCELLED,
+         1 AS CNC_TYPE,
+         0 AS TOTAL_AMOUNT,
+         A.DEPT_ID  AS DEPT_ID,
+         GETDATE() AS LAST_UPDATE,
+         '0000000' AS USER_CODE,
+         0 AS APPROVED,
+         0 AS SENT_TO_HO,
+         'LATER' AS CNC_MEMO_ID,
+         @CFIN_YEAR AS FIN_YEAR,
+          0 AS UPLOADED_TO_ACTIVSTREAM,
+          '' AS REF_MEMO_ID,
+         '' AS REF_XN_TYPE,
+          1 AS FROM_STOCKAUDIT,
+         '0000000' AS EDT_USER_CODE,
+         GETDATE() AS CNC_TIME,
+         0 AS STOCK_ADJ_NOTE,
+         CONVERT(VARCHAR,GETDATE(),121) AS CNC_DT,
+          0 AS RFOPT_UPDATED,
+          'AGAINST STOCK RECONCILATION RECON ID-'+A.RECON_ID+' DT-'+CONVERT (VARCHAR(10),A.RECON_START_DT,121)  AS REMARKS,
+          0 AS SENT_FOR_RECON,
+          '000' AS BIN_ID,
+         '' AS TOTAL_QUANTITY_STR,
+         0 AS WIP,
+         1 AS XN_ITEM_TYPE ,
+         A.RECON_ID,
+         A.RECON_START_DT AS RECON_DT,
+         @nsp_id as sp_id
+     FROM STK_RECON_HIST_MST A
+     WHERE A.RECON_ID=@CMEMO_ID     
+         
+         
+    SELECT '' AS  CNC_MEMO_NO,
+            A.PRODUCT_CODE,
+            A.SHORTAGE_QTY AS QUANTITY,
+            B.DEPT_ID,
+            CAST(NEWID() AS VARCHAR(100)) AS ROW_ID,
+            GETDATE() AS LAST_UPDATE,
+            'LATER' AS CNC_MEMO_ID,
+            @CFIN_YEAR AS FIN_YEAR,
+            sku.mrp  AS RATE,
+            0 AS ADJ_PERCENTAGE,
+            '000'   AS BIN_ID,
+            '' AS WIP_UID,
+    ART.article_no,SD.sub_section_name ,SM.section_name ,
+    P1.para1_name ,P2.para2_name ,P3.para3_name ,P4.para4_name ,
+    P5.para5_name ,P6.PARA6_NAME,
+    @nsp_id as sp_id
+    FROM STK_RECON_HIST_DET A
+    JOIN STK_RECON_HIST_MST  B ON A.RECON_ID =B.RECON_ID 
+    JOIN SKU (NOLOCK) ON A.PRODUCT_CODE= SKU.PRODUCT_CODE
+    JOIN ARTICLE ART (NOLOCK) ON ART.ARTICLE_CODE=SKU.ARTICLE_CODE
+    JOIN SECTIOND SD (NOLOCK) ON SD.sub_section_code =ART.sub_section_code 
+    JOIN sectionM SM (NOLOCK) ON SM.section_code =SD.section_code 
+    JOIN PARA1 P1 (NOLOCK) ON P1.para1_code =SKU.para1_code 
+    JOIN PARA2 P2 (NOLOCK) ON P2.para2_code =SKU.para2_code 
+    JOIN PARA3 P3 (NOLOCK) ON P3.para3_code =SKU.para3_code 
+    JOIN PARA4 P4 (NOLOCK) ON P4.para4_code =SKU.para4_code 
+    JOIN PARA5 P5 (NOLOCK) ON P5.para5_code =SKU.para5_code 
+    JOIN PARA6 P6 (NOLOCK) ON P6.para6_code =SKU.para6_code 
+    WHERE A.RECON_ID=@CMEMO_ID
+    AND (A.SHORTAGE_QTY >0 )
+   
+
+GOTO END_PROC
+
+
+END_PROC:	
+END

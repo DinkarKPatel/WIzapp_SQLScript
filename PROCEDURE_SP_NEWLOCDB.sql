@@ -1,0 +1,138 @@
+create PROCEDURE SP_NEWLOCDB
+(
+ @CLOCID VARCHAR(4),
+ @bCalledfromAPI bit =0,
+ @CDB_PATH VARCHAR(1000)=''
+)
+AS
+BEGIN
+   --(dinkar) Replace  left(memoid,2) to Location_code 
+
+
+    DECLARE @DBNAME VARCHAR(100),@CNEWDBNAME VARCHAR(100),@SR AS INT,@CCMD NVARCHAR(MAX),@blnkdbfound BIT,
+	        @cerrmsg varchar(1000)
+    
+    SET @SR=1
+   
+    SET @DBNAME=db_name()
+    SET @CNEWDBNAME='RPD_'+@DBNAME+'_'+@CLOCID+'_POS'
+    LBL_CREATE_NEW_DATABASE:
+        
+    --CHECK WHEATHER DATA BASE ALREADY EXISTS OR NOT
+    IF DB_ID(@CNEWDBNAME) IS NOT NULL
+    BEGIN
+	       
+		 SET @CCMD=N'if exists (select top 1 ''U'' FROM '+@CNEWDBNAME+'.SYS.TABLES where type=''u'' ) 
+		   set @blnkdbfound=0
+		else 
+		 SET @blnkdbfound=1'
+		EXEC SP_EXECUTESQL @CCMD,N'@blnkdbfound bit output',@blnkdbfound output
+		PRINT @CCMD
+		
+
+		IF ISNULL(@blnkdbfound,0)=0
+		BEGIN
+		   set @cerrmsg= 'BLANK DB NOT FOUND PLEASE CHECK' 
+		   Goto END_PROC
+		END 
+		ELSE 
+		BEGIN
+		   SET @CERRMSG=   'DATABASE ALREADY EXISTS' 
+		   GOTO  END_PROC
+
+
+		END
+
+		 --select * from @CNEWDBNAME
+        -- SET @CNEWDBNAME=@CNEWDBNAME+CAST(@SR AS VARCHAR(10))
+         --SET @SR=@SR+1
+         --GOTO LBL_CREATE_NEW_DATABASE
+    END
+
+	IF OBJECT_ID('MASTER.DBO.CLOUD_DBINFO','U') IS NOT NULL AND ISNULL(@CDB_PATH,'')=''
+	BEGIN 
+	     
+		 IF EXISTS (SELECT  TOP 1 'U' FROM MASTER.DBO.CLOUD_DBINFO WHERE DBNAME =@DBNAME )
+		 BEGIN
+		      
+			  SET @CDB_PATH='\\10.10.10.6\posDatareconstructed'
+		 END
+
+	END 
+
+	
+   
+   if isnull(@CDB_PATH,'')=''
+   begin
+
+     SELECT TOP 1   @CDB_PATH=REVERSE(RIGHT(REVERSE(PHYSICAL_NAME), LEN(PHYSICAL_NAME) - CHARINDEX('\', REVERSE(PHYSICAL_NAME))))
+	 FROM SYS.DATABASES DB JOIN SYS.MASTER_FILES F ON DB.DATABASE_ID=F.DATABASE_ID
+	 WHERE DB.NAME =DB_NAME() AND FILE_ID = 1
+         
+     IF RIGHT(@CDB_PATH,1)<>'\'
+     SET @CDB_PATH=@CDB_PATH+'\'
+
+   end
+   
+
+
+	
+
+    --CREATE NEW DATA BASE
+     IF DB_ID(@CNEWDBNAME) IS NULL   
+	 BEGIN  
+	     SET @CCMD=N'CREATE DATABASE '+@CNEWDBNAME+'  
+	     ON  
+	     ( NAME = '+@CNEWDBNAME+'_DAT,  
+		 FILENAME = '''+@CDB_PATH+'\'+@CNEWDBNAME+'.MDF'')  
+	     LOG ON   
+	     ( NAME = '+@CNEWDBNAME+'_LOG,  
+		 FILENAME = '''+@CDB_PATH+'\'+@CNEWDBNAME+'.LDF'') '     
+	  
+		 PRINT @CCMD  
+		 EXEC SP_EXECUTESQL @CCMD 
+      END 
+
+
+DECLARE @DB VARCHAR(100),@PATH VARCHAR(100),@ERR INT=0,@ERR_MSG VARCHAR(100)=''
+SET @DB=@CNEWDBNAME+'_IMAGE'
+
+ IF ISNULL(@CDB_PATH,'')=''
+ BEGIN
+
+     SELECT @PATH=REVERSE(SUBSTRING(REVERSE(FILENAME),CHARINDEX('\',REVERSE(FILENAME),1),1000)) FROM MASTER..SYSDATABASES WHERE NAME=DB_NAME()
+ END
+ Else 
+   set @PATH=@CDB_PATH
+
+
+     IF RIGHT(@PATH,1)<>'\'
+     SET @PATH=@PATH+'\'
+
+SET @CCMD=N'CREATE DATABASE ['+@DB+'] ON  PRIMARY 
+(NAME = N'''+@DB+''', FILENAME = N'''+@PATH+@DB+'.MDF'')
+LOG ON 
+(NAME = N'''+@DB+'_LOG'', FILENAME = N'''+@PATH+@DB+'.LDF'') '
+
+IF NOT EXISTS(SELECT * FROM SYS.DATABASES WHERE NAME=@DB)
+   BEGIN
+
+     print @CCMD
+     EXEC(@CCMD)
+	
+   
+ END  
+
+END_PROC:
+ 
+ if @bCalledfromAPI=0
+ SELECT @CNEWDBNAME AS NEWDBNAME,@CERRMSG As Errmsg
+ else 
+ begin
+      insert into #tmpcurdbname(NEWDBNAME,Errmsg,DBPATH)
+	  SELECT @CNEWDBNAME AS NEWDBNAME,@CERRMSG As Errmsg,@CDB_PATH AS DBPATH
+
+ end
+
+END
+

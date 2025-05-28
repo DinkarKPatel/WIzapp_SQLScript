@@ -1,0 +1,3 @@
+---Discarded this procedure after discussion with DInkar as it is accessing some columns from cloud_pmtbuild_log which are not there
+--- as it was giving error in creation while running of COnsole at RTech
+--- (Sanjay : 01-07-2024 15:48 Pm)

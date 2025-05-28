@@ -1,0 +1,134 @@
+
+CREATE PROC SP3S_STOCKCOUNTSETUP
+(
+@iQueryId Int,
+@cUserCode Varchar(10),
+@cWhere Varchar(50)=''
+)
+AS BEGIN
+
+
+    
+IF @iQueryId = 1    
+GOTO LBL1  
+ELSE IF @iQueryId = 2  
+GOTO LBL2  
+ELSE IF @iQueryId = 3 
+GOTO LBL3  
+ELSE IF @iQueryId = 4
+GOTO LBL4 
+ELSE IF @iQueryId = 5
+GOTO LBL5
+ELSE IF @iQueryId = 6
+GOTO LBL6
+
+ELSE  
+GOTO LAST    
+
+LBL1:
+
+	SELECT *  FROM STOCK_COUNT_SETUP_MST (NOLOCK) ORDER BY STK_COUNT_SETUP_NAME 
+
+	
+	
+GOTO LAST  
+
+LBL2:
+
+	Select COL_HEADER AS [Stock Count Column List] From STOCK_COUNT_SETUP_COL_LIST 	   (nolock) where STK_COUNT_SETUP_ID = @cWhere 
+	order by COL_HEADER
+	
+
+
+	
+
+GOTO LAST   
+
+LBL3:
+
+	Select  b.dept_id +  ' ' + b.dept_name  as [Loc Name],(CASE WHEN WEEK_DAY=1 THEN 'SUNDAY' WHEN WEEK_DAY=2 THEN 'MONDAY' WHEN WEEK_DAY= 3 THEN 
+	'TUESDAY' WHEN WEEK_DAY=4 THEN 'WEDNESDAY' WHEN WEEK_DAY= 5 THEN 'THURSDAY' WHEN WEEK_DAY= 6 then 'FRIDAY' when week_day=7 then 'SATURDAY' ELSE '' END )	as [Stock Count on] from 
+	STOCK_COUNT_SETUP_LINK_LOC a  (nolock) 
+	join location b on a.dept_id= b.dept_id where STK_COUNT_SETUP_ID = @cWhere 
+	
+
+
+	
+
+GOTO LAST 
+
+
+
+LBL4:
+
+	SELECT  A.DEPT_ID , A.DEPT_NAME  ,A.AREA_NAME ,A.CITY ,A.STATE ,C.STK_COUNT_SETUP_NAME ,(CASE WHEN WEEK_DAY=1 THEN 'SUNDAY' WHEN WEEK_DAY=2 THEN 'MONDAY' WHEN WEEK_DAY= 3 THEN 
+	'TUESDAY' WHEN WEEK_DAY=4 THEN 'WEDNESDAY' WHEN WEEK_DAY= 5 THEN 'THURSDAY' WHEN WEEK_DAY= 6 then 'FRIDAY' when week_day=7 then 'SATURDAY' ELSE '' END )	AS STOCK_COUNT_ON, C.STK_COUNT_SETUP_ID 
+	FROM Loc_view A
+	JOIN STOCK_COUNT_SETUP_LINK_LOC B ON A.DEPT_ID= B.DEPT_ID
+	JOIN STOCK_COUNT_SETUP_MST C ON B.STK_COUNT_SETUP_ID = C.STK_COUNT_SETUP_ID 
+	ORDER BY  DEPT_NAME
+	
+
+
+	
+
+GOTO LAST 
+
+
+LBL5: 
+
+    select a.* , 'Invalid Stock Count Title'  as Errmsg  from ##TEMP_STOCK_COUNT_SETUP_LINK_LOC a
+	left outer join STOCK_COUNT_SETUP_MST b on a.stk_count_setup_name= b.STK_COUNT_SETUP_NAME 
+	where b.stk_count_setup_id is null
+	
+	UNION ALL
+
+	select a.* ,'Invalid Location Id' as Errmsg  from ##TEMP_STOCK_COUNT_SETUP_LINK_LOC a
+	left outer join LOCATION b on a.dept_id= b.dept_id
+	where b.dept_id is null
+	
+	UNION ALL
+
+	select a.* , 'Invalid Week Day'  as Errmsg  
+	from ##TEMP_STOCK_COUNT_SETUP_LINK_LOC a
+	where a.week_day not in ('MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY','SUNDAY','MON','TUE','WED','THU','FRI','SAT','SUN')
+	
+GOTO LAST
+
+
+
+
+LBL6: 
+
+		DELETE FROM STOCK_COUNT_SETUP_LINK_LOC WHERE STK_COUNT_SETUP_ID IN 
+		(  
+		select b.STK_COUNT_SETUP_ID   from ##TEMP_STOCK_COUNT_SETUP_LINK_LOC a
+		join STOCK_COUNT_SETUP_MST b on a.stk_count_setup_name= b.STK_COUNT_SETUP_NAME 
+		)
+	 
+
+		INSERT STOCK_COUNT_SETUP_LINK_LOC	( DEPT_ID, LAST_UPDATE, STK_COUNT_SETUP_ID, WEEK_DAY )  
+		SELECT 	  DEPT_ID, getdate() as LAST_UPDATE, b.STK_COUNT_SETUP_ID, 
+		(CASE WHEN WEEK_DAY IN ('SUNDAY','SUN') THEN 1 WHEN WEEK_DAY IN ('MONDAY','MON')  THEN 2 WHEN WEEK_DAY in ( 'TUESDAY','TUE') THEN 3
+		 WHEN WEEK_DAY in ( 'WEDNESDAY','WED') THEN 4 WHEN WEEK_DAY IN ( 'THURSDAY','THU') THEN 5
+		 WHEN WEEK_DAY in (  'FRIDAY','FRI') THEN 6 when week_day in ( 'SATURDAY','SAT') THEN 7 ELSE 1 END )	WEEK_DAY   
+		from ##TEMP_STOCK_COUNT_SETUP_LINK_LOC a
+		join STOCK_COUNT_SETUP_MST b on a.stk_count_setup_name= b.STK_COUNT_SETUP_NAME 
+		
+	
+	
+GOTO LAST
+
+
+
+
+LAST:
+END
+
+
+
+
+
+
+
+

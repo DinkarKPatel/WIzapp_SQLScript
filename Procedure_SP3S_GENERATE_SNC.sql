@@ -1,0 +1,180 @@
+create PROCEDURE SP3S_GENERATE_SNC--(LocId 3 digit change only increased the parameter width by Sanjay:05-11-2024)
+(
+  @nUpdateMode numeric(1,0),
+  @CMEMO_ID VARCHAR(50)='',
+  @clocid varchar(4)='',
+  @CERRORMSG varchar(500) output
+)
+AS
+BEGIN
+     
+	  BEGIN TRY
+
+	    Declare @cStep varchar(20),@cAc_code varchar(15),@NSPID varchar(50),@cfinyear varchar(5),@CMEMOID varchar(50)
+
+		select cast('' as varchar(1000)) as Errmsg
+		   into #tmpError
+	    from pmt01106 (nolock) where 1=2
+
+
+		set @NSPID=newid()
+
+		SELECT @CFINYEAR=FIN_YEAR
+		FROM TRANSFER_TO_TRADING_MST A (nolock)  WHERE  MEMO_ID=@CMEMO_ID
+
+		if @nUpdateMode=3
+		begin
+		     
+			    SELECT MEMO_ID INTO #TMPCANCELLEDMEMO FROM SNC_MST WHERE TTM_MEMO_ID =@CMEMO_ID
+
+				WHILE EXISTS (SELECT TOP 1 'U' FROM #TMPCANCELLEDMEMO)
+		        BEGIN
+
+				    SELECT TOP 1 @CMEMOID=MEMO_ID  FROM #TMPCANCELLEDMEMO
+
+						Exec SAVETRAN_SNC
+						@NUPDATEMODE=@nUpdateMode,
+						@NSPID=@NSPID,
+						@CMEMONOPREFIX=@CLOCID,
+						@CFINYEAR=@CFINYEAR,
+						@CMACHINENAME='',
+						@CWINDOWUSERNAME='',
+						@CWIZAPPUSERCODE='',
+						@CMEMOID=@CMEMOID,
+						@CMEMODT='',
+						@LGENERATEBARCODES=0,
+						@CBARCODEPREFIX='',
+						@BcalledfromTTM=1
+
+					 select   @CERRORMSG=errmsg FROM #TMPERROR
+
+					 if isnull(@CERRORMSG,'')<>''
+					   goto END_proc
+
+					  DELETE FROM #TMPCANCELLEDMEMO WHERE memo_id =@CMEMOID
+
+
+
+				end
+
+
+		       GOTO  END_PROC
+		end
+
+
+	  
+
+	    SELECT A.AC_CODE,A.ARTICLE_CODE ,A.PARA1_CODE,A.PARA2_CODE,A.PARA3_CODE,A.PARA4_CODE,A.PARA5_CODE ,A.PARA6_CODE,A.MRP,A.WS_PRICE ,B.PURCHASE_PRICE,isnull(a.FIX_MRP,0) FIX_MRP,
+		      a.QUANTITY as QUANTITY,a.product_code,c.Trading_Product_code,
+			  Row_id ='LATER'+cast( dense_rank() over (partition by A.AC_CODE
+			           order by A.ARTICLE_CODE ,A.PARA1_CODE,A.PARA2_CODE,A.PARA3_CODE,A.PARA4_CODE,A.PARA5_CODE ,A.PARA6_CODE,A.MRP,A.WS_PRICE ,B.PURCHASE_PRICE,isnull(a.FIX_MRP,0)) as varchar(50))
+			          
+	 	into #tmpsndet
+		FROM TRANSFER_TO_TRADING_DET A
+		JOIN SKU B ON A.PRODUCT_CODE=B.PRODUCT_CODE
+		join JOBWORK_PMT c on a.PRODUCT_CODE =c.PRODUCT_CODE 
+	    WHERE  MEMO_ID=@CMEMO_ID and isnull(c.Trading_Product_code,'')<>''
+
+	
+
+	   
+		WHILE EXISTS (SELECT TOP 1 'U' FROM #TMPSNDET)
+		BEGIN
+		    
+			SELECT TOP 1 @CAC_CODE=AC_CODE FROM #TMPSNDET
+
+			--****** SNc Master ****
+		   INSERT SNC_SNC_MST_UPLOAD	( location_code, AC_CODE, BILL_LEVEL_TAX_METHOD, BIN_ID, CANCELLED, DEPT_ID, EDT_USER_CODE, FIN_YEAR, LAST_UPDATE, MEMO_ID, MEMO_NO, MEMO_PREFIX, OLAP_SYNCH_LAST_UPDATE, PUR_CAL_METHOD, QUANTITY_LAST_UPDATE, RECEIPT_DT, REMARKS, SP_ID, SUBTOTAL, TAXFORM_STORAGE_MODE, USER_CODE, WIP,TTM_MEMO_ID )  
+		   SELECT @clocid as Location_code,	 @CAC_CODE AC_CODE,0 BILL_LEVEL_TAX_METHOD,'000' BIN_ID, CANCELLED, DEPT_ID,'0000000' EDT_USER_CODE, FIN_YEAR,GETDATE() LAST_UPDATE,'LATER' MEMO_ID,'LATER' MEMO_NO,'' MEMO_PREFIX, OLAP_SYNCH_LAST_UPDATE,1 PUR_CAL_METHOD, QUANTITY_LAST_UPDATE,MEMO_DT RECEIPT_DT,
+		             'AUTO GENERATE(TTM)' REMARKS,@NSPID SP_ID, SUBTOTAL,1 TAXFORM_STORAGE_MODE, USER_CODE,0 WIP, MEMO_ID 
+		   FROM  TRANSFER_TO_TRADING_MST
+		   WHERE MEMO_ID=@CMEMO_ID
+
+
+		   --****** SNc Details ****
+
+			INSERT SNC_SNC_DET_UPLOAD	(ARTICLE_CODE, AUTO_SRNO, BIN_ID, FIX_MRP, MANUAL_CAL, MANUAL_MPP, MANUAL_MRP, MANUAL_RATE, MANUAL_WSP, MANUAL_WSPP, MD_PERCENTAGE, MEMO_ID, 
+			            MP_PER_WSP, MP_PERCENTAGE, MRP, PARA1_CODE, PARA2_CODE, PARA3_CODE, PARA4_CODE, PARA5_CODE, PARA6_CODE, PURCHASE_PRICE, 
+			           QUANTITY, RATE, ROW_ID, SELECTION_MODE, SP_ID, SRNO, WHOLESALE_PRICE, WSP_PERCENTAGE,HSN_CODE  )  
+
+			SELECT 	a.ARTICLE_CODE,0 AUTO_SRNO,'000' BIN_ID, a.FIX_MRP,0 MANUAL_CAL,0 MANUAL_MPP,0 MANUAL_MRP,0 MANUAL_RATE,0 MANUAL_WSP,0 MANUAL_WSPP,0 MD_PERCENTAGE,'LATER' MEMO_ID,0 MP_PER_WSP,0 MP_PERCENTAGE, a.MRP, 
+			      a.PARA1_CODE, a.PARA2_CODE, a.PARA3_CODE, a.PARA4_CODE, a.PARA5_CODE, a.PARA6_CODE, a.PURCHASE_PRICE, 
+				  sum(QUANTITY) as QUANTITY,a.mrp RATE, a.ROW_ID, 
+				 0 SELECTION_MODE,@NSPID SP_ID,0 SRNO,WS_PRICE WHOLESALE_PRICE,0 WSP_PERCENTAGE ,art.hsn_code 
+			FROM #tmpsndet a
+			join article art (nolock) on a.ARTICLE_CODE =art.article_code 
+			where AC_CODE=@CAC_CODE
+			group by A.ARTICLE_CODE ,A.PARA1_CODE,A.PARA2_CODE,A.PARA3_CODE,A.PARA4_CODE,A.PARA5_CODE ,A.PARA6_CODE,A.MRP,A.WS_PRICE ,
+			a.PURCHASE_PRICE,a.FIX_MRP,row_id ,art.hsn_code 
+			
+
+			 --****** SNc consumption ****
+
+			 INSERT SNC_SNC_consumable_det_UPLOAD	( AUTO_SRNO, AVG_QUANTITY, BIN_ID, LAST_UPDATE, manual_qty, MEMO_ID, PRODUCT_CODE, PURCHASE_PRICE, QUANTITY, REF_ROW_ID, ROW_ID, SP_ID, SRNO, WASTAGE_QUANTITY, WIP, WIP_UID )  
+			 SELECT 	0  AUTO_SRNO,1 AVG_QUANTITY,'000' BIN_ID,getdate() LAST_UPDATE,0 manual_qty,'LATER' MEMO_ID, PRODUCT_CODE, PURCHASE_PRICE, QUANTITY,Row_id REF_ROW_ID,'LATER' ROW_ID,
+			            @NSPID SP_ID,0 SRNO,0 WASTAGE_QUANTITY,0 WIP,'' WIP_UID 
+			 FROM #tmpsndet a
+			 where AC_CODE=@CAC_CODE
+
+
+			 INSERT SNC_SNC_BARCODE_DET_UPLOAD	( PRODUCT_CODE, REFROW_ID, tax_amount ,SP_ID)  
+			 select a.Trading_Product_code ,a.Row_id ,0 as tax_amount ,@NSPID as sp_id
+			 from #tmpsndet A
+			 where AC_CODE=@CAC_CODE
+			 and isnull(a.Trading_Product_code,'')<>''
+			 group by a.Trading_Product_code ,a.Row_id
+
+
+			
+			 Exec SAVETRAN_SNC
+			    @NUPDATEMODE=@nUpdateMode,
+				@NSPID=@NSPID,
+				@CMEMONOPREFIX=@CLOCID,
+				@CFINYEAR=@CFINYEAR,
+				@CMACHINENAME='',
+				@CWINDOWUSERNAME='',
+				@CWIZAPPUSERCODE='',
+				@CMEMOID='',
+				@CMEMODT='',
+				@LGENERATEBARCODES=1,
+				@CBARCODEPREFIX='',
+				@BcalledfromTTM=1
+
+             select   @CERRORMSG=errmsg FROM #TMPERROR
+
+			 if isnull(@CERRORMSG,'')<>''
+			   goto END_proc
+
+			DELETE FROM #TMPSNDET WHERE AC_CODE=@CAC_CODE
+
+			
+			
+
+	    END
+
+
+
+	 --   select * from SNC_MST where TTM_MEMO_ID='01011240000001VP000010'
+		--select * from SNC_Det where memo_id='0101124000000100000047'
+		--select * from SNC_CONSUMABLE_DET where memo_id='0101124000000100000047'
+
+		--select * from SNC_barcode_DET where REFROW_ID in
+		--(select row_id from SNC_Det where memo_id='0101124000000100000047')
+
+
+
+	  		
+	END TRY
+	BEGIN CATCH
+		 SET @CERRORMSG = 'PROCEDURE SP3S_GENERATE_SNC : STEP- ' + LTRIM(rtrim(@cStep)) + ' SQL ERROR: #' + LTRIM(STR(ERROR_NUMBER())) + ' ' + ERROR_MESSAGE()
+		--SELECT 'ERROR',@CERRORMSG	
+		GOTO END_PROC
+	END CATCH
+
+END_proc:
+
+	if object_id('tempdb..#tmpsndet','u') is not null
+	   drop table #tmpsndet
+
+
+END

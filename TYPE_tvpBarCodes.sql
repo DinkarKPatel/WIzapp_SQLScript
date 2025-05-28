@@ -1,0 +1,1 @@
+CREATE TYPE tvpBarCodes as table (product_code varchar(50),cmd_row_id varchar(50))

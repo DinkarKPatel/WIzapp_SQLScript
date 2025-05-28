@@ -1,0 +1,342 @@
+CREATE PROCEDURE DBO.SP_StructureMerge    
+(    
+ @nMode  TINYINT    
+)    
+AS    
+BEGIN    
+   --DECLARE LOCAL VARIABLE    
+   DECLARE @Errmsg NVARCHAR(2000),@nStep SMALLINT,@nLoop_Start SMALLINT,@nLoop_End SMALLINT    
+          ,@sSQL nvarchar(max),@FLAG TINYINT,@ScriptType VARCHAR(50),@nScriptFlag TINYINT    
+       
+   ---SET VALUE INTO LOCAL VARIABLE    
+       
+   SET @Errmsg = ''    
+   SET @nStep  = 0     
+   SET @sSQL   = ''    
+   SET @FLAG   = 0    
+   
+   ----- Write Rename Column Commands Here	   
+   IF @nMode=1 
+   BEGIN
+		IF EXISTS(SELECT a.name FROM sys.columns a JOIN sys.tables b ON a.object_id=b.object_id  WHERE a.name='discounted_card_type' AND b.name='arc01106') exec sp_rename 'arc01106.discounted_card_type','old_discount_card_type','column'  ;IF EXISTS(SELECT a.name FROM sys.columns a JOIN sys.tables b ON a.object_id=b.object_id      WHERE a.name='discounted_card_type' AND b.name='custdym') exec sp_rename 'custdym.discounted_card_type','old_discount_card_type','column' 
+		
+		IF EXISTS(SELECT a.name FROM sys.columns a JOIN sys.tables b ON a.object_id=b.object_id WHERE a.name='discounted_card_type' AND b.name='ARC_arc01106_MIRROR') exec sp_rename 'ARC_arc01106_MIRROR.discounted_card_type','old_discount_card_type','column' ;IF EXISTS(SELECT a.name FROM sys.columns a JOIN sys.tables b ON a.object_id=b.object_id  WHERE a.name='discounted_card_type' AND b.name='ARC_custdym_MIRROR') exec sp_rename 'ARC_custdym_MIRROR.discounted_card_type','old_discount_card_type','column'   ;IF EXISTS(SELECT a.name FROM sys.columns a JOIN sys.tables b ON a.object_id=b.object_id  WHERE a.name='discounted_card_type' AND b.name='ARC_custdym_UPLOAD') exec sp_rename 'ARC_custdym_UPLOAD.discounted_card_type','old_discount_card_type','column'   ;IF EXISTS(SELECT a.name FROM sys.columns a JOIN sys.tables b ON a.object_id=b.object_id  WHERE a.name='discounted_card_type' AND b.name='CUS_custdym_MIRROR') exec sp_rename 'CUS_custdym_MIRROR.discounted_card_type','old_discount_card_type','column'   ;IF EXISTS(SELECT a.name FROM sys.columns a JOIN sys.tables b ON a.object_id=b.object_id  WHERE a.name='discounted_card_type' AND b.name='CUS_custdym_UPLOAD') exec sp_rename 'CUS_custdym_UPLOAD.discounted_card_type','old_discount_card_type','column'   ;IF EXISTS(SELECT a.name FROM sys.columns a JOIN sys.tables b ON a.object_id=b.object_id  WHERE a.name='discounted_card_type' AND b.name='SLS_CUSTDYM_MIRROR') exec sp_rename 'SLS_CUSTDYM_MIRROR.discounted_card_type','old_discount_card_type','column'   ;IF EXISTS(SELECT a.name FROM sys.columns a JOIN sys.tables b ON a.object_id=b.object_id  WHERE a.name='discounted_card_type' AND b.name='SLS_custdym_UPLOAD') exec sp_rename 'SLS_custdym_UPLOAD.discounted_card_type','old_discount_card_type','column' 
+   END
+   		    
+   PROC_ERROR:    
+       
+BEGIN TRY    
+        
+  IF @FLAG = 1 AND @NMODE = 2    
+      GOTO AGEIN_START;    
+         
+  IF @nMode = 1    
+  BEGIN    
+      SET @nStep  = 10    
+            
+        ---TRUNCATE TABLE    
+      TRUNCATE TABLE TblMismatchScript    
+            
+        ------GENERATE SCRIPT FOR MISMATCH CONSTRAINT FORIGEN KEY ----    
+      INSERT INTO TblMismatchScript(Script,ScriptType,Flag)    
+	  SELECT 'ALTER TABLE '+D.TABLE_NAME + ' DROP CONSTRAINT '+D.CONSTRAINT_NAME,'DROP FOREIGN',0    
+	  FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS D --WHERE CONSTRAINT_TYPE ='PRIMARY KEY'    
+	  LEFT JOIN DBO.INF_SCHEMA_TABLE_CONSTRAINTS S ON D.CONSTRAINT_NAME = S.CONSTRAINT_NAME AND D.TABLE_NAME = S.TABLE_NAME    
+	  WHERE S.CONSTRAINT_NAME IS NULL AND D.CONSTRAINT_TYPE ='FOREIGN KEY'    
+	      
+	  ------GENERATE SCRIPT FOR MISMATCH CONSTRAINT LIKE CHECK CONSTRAINT----    
+	  INSERT INTO TblMismatchScript(Script,ScriptType,Flag)    
+	  SELECT DISTINCT 'ALTER TABLE '+DCU.TABLE_NAME + ' DROP CONSTRAINT '+DC.CONSTRAINT_NAME ,'DROP CHECK CONS',0    
+	  FROM INFORMATION_SCHEMA.CHECK_CONSTRAINTS DC    
+	  JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE  DCU ON DC.CONSTRAINT_NAME = DCU.CONSTRAINT_NAME    
+	  LEFT JOIN INF_SCHEMA_CHECK_CONSTRAINTS SC ON DC.CONSTRAINT_NAME = SC.CONSTRAINT_NAME    
+	  WHERE SC.CONSTRAINT_NAME IS NULL    
+	      
+	  ------GENERATE SCRIPT FOR MISMATCH CONSTRAINT LIKE PRIMARY KEY FORIGEN KEY ----    
+			INSERT INTO TblMismatchScript(Script,ScriptType,Flag)    
+	  SELECT 'ALTER TABLE '+D.TABLE_NAME + ' DROP CONSTRAINT '+D.CONSTRAINT_NAME ,'DROP PRIMARY',0    
+	  FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS D --WHERE CONSTRAINT_TYPE ='PRIMARY KEY'    
+	  LEFT JOIN DBO.INF_SCHEMA_TABLE_CONSTRAINTS S ON D.CONSTRAINT_NAME = S.CONSTRAINT_NAME AND D.TABLE_NAME = S.TABLE_NAME    
+	  WHERE S.CONSTRAINT_NAME IS NULL AND D.CONSTRAINT_TYPE in ('PRIMARY KEY','UNIQUE')    
+	  
+	  UNION
+	  SELECT 'ALTER TABLE '+a.TABLE_NAME + ' DROP CONSTRAINT '+a.CONSTRAINT_NAME +';'+
+	  'ALTER TABLE '+b.TABLE_NAME + ' ADD CONSTRAINT '+b.CONSTRAINT_NAME + ' UNIQUE ('+b.expression+')','DROP UNIQUE',0 FROM
+	  (
+	  SELECT d.table_name, d.CONSTRAINT_NAME,
+	  STUFF((SELECT ','+COLUMN_NAME FROM INFormation_SCHEMA.KEY_COLUMN_USAGE KU     
+		  WHERE d.CONSTRAINT_NAME = KU.CONSTRAINT_NAME ORDER BY KU.ORDINAL_POSITION FOR XML PATH('') ),1,1,'') expression
+	  FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS D 
+	  where d.CONSTRAINT_TYPE='unique') a
+	  left outer join
+	  (select table_name,constraint_name, STUFF((SELECT ','+COLUMN_NAME FROM DBO.INF_SCHEMA_KEY_COLUMN_USAGE KU     
+		  WHERE a.CONSTRAINT_NAME = KU.CONSTRAINT_NAME ORDER BY KU.ORDINAL_POSITION FOR XML PATH('') ),1,1,'') expression
+		  from INF_SCHEMA_TABLE_CONSTRAINTS a where CONSTRAINT_TYPE='unique')b on b.CONSTRAINT_NAME=a.CONSTRAINT_NAME
+		  where isnull(a.expression,'')<>isnull(b.expression,'') AND b.CONSTRAINT_NAME IS NOT NULL
+	  --WHERE CONSTRAINT_TYPE ='PRIMARY KEY'    
+	   
+	  ----- GENERATE SCRIPT FOR CREATE TABLE OF WHICH ARE NOT EXIST INTO CHILD TABLE-----    
+	  INSERT INTO TblMismatchScript(Script,ScriptType,Flag,TableName)    
+	  SELECT  DISTINCT 'CREATE TABLE ['+T.TABLE_NAME + '] ( '+S.COLUMN_NAME ,'TABLE',0,T.TABLE_NAME    
+	  FROM dbo.INF_SCHEMA_TABLES T    
+	  LEFT JOIN INFORMATION_SCHEMA.TABLES T1 ON T.TABLE_NAME = T1.TABLE_NAME    
+	  CROSS APPLY    
+		 (    
+		  SELECT STUFF((    
+		SELECT +',['+COLUMN_NAME + '] '+    
+		CASE WHEN DATA_TYPE IN ('DECIMAL','NUMERIC') THEN DATA_TYPE +' ('+ CAST(NUMERIC_PRECISION AS VARCHAR)+','+CAST(NUMERIC_SCALE AS VARCHAR)+')'    
+		WHEN DATA_TYPE IN ('VARCHAR','CHAR') THEN DATA_TYPE +' ('+ CASE CHARACTER_MAXIMUM_LENGTH WHEN '-1' THEN 'MAX' ELSE CAST(CHARACTER_MAXIMUM_LENGTH AS VARCHAR) END +')'
+		WHEN DATA_TYPE IN ('NVARCHAR','NCHAR','VARBINARY') THEN DATA_TYPE +' ('+ CASE CHARACTER_maximum_LENGTH WHEN '-1' THEN 'MAX' ELSE CAST(CHARACTER_maximum_LENGTH AS VARCHAR) END +')'
+		ELSE DATA_TYPE    
+		END    
+		+' '+CASE IS_NULLABLE WHEN 'YES' THEN 'NULL' WHEN 'NO' THEN 'NOT NULL' END    
+		+' '+
+		(CASE ISNULL(COLUMN_DEFAULT,'') WHEN '' 
+		THEN (CASE WHEN c2.columnname IS NOT NULL THEN 'IDENTITY' ELSE '' END) ELSE 
+		'DEFAULT '+ COLUMN_DEFAULT END)    
+	    
+		FROM DBO.INF_SCHEMA_COLUMNS C    
+		LEFT JOIN dbo.INF_SCHEMA_IDENTITY_COLUMNS C2 ON C2.COLUMNNAME=C.COLUMN_NAME AND c2.tablename=c.TABLE_NAME
+		WHERE T.TABLE_NAME = C.TABLE_NAME ORDER BY C.ORDINAL_POSITION FOR XML PATH('')    
+		),1,1,'')+')' AS [COLUMN_NAME]    
+		) AS S    
+	  WHERE LEFT(t.TABLE_NAME,10)<>'INF_SCHEMA' AND T.TABLE_TYPE ='BASE TABLE' AND T1.TABLE_NAME IS NULL    
+	      
+	  SET @nStep  = 20    
+		----- GENERATE SCRIPT FOR ADD COLUMN WHICH ARE NOT EXIST INTO CHILD TABLE-----    
+	  INSERT INTO TblMismatchScript(Script,ScriptType,Flag)    
+		SELECT 'ALTER TABLE '+C1.TABLE_NAME     
+	   + ' ADD '+ C1.COLUMN_NAME    
+	   +' '+ CASE WHEN C1.DATA_TYPE IN ('DECIMAL','NUMERIC') THEN C1.DATA_TYPE +' ('+ CAST(C1.NUMERIC_PRECISION AS VARCHAR)+','+CAST(C1.NUMERIC_SCALE AS VARCHAR)+')'        
+				  WHEN c1.DATA_TYPE IN ('VARCHAR','CHAR') THEN c1.DATA_TYPE +' ('+ CASE c1.CHARACTER_MAXIMUM_LENGTH WHEN '-1' THEN 'MAX' ELSE CAST(c1.CHARACTER_MAXIMUM_LENGTH AS VARCHAR) END +')'
+				  WHEN c1.DATA_TYPE IN ('NVARCHAR','NCHAR','VARBINARY') THEN c1.DATA_TYPE +' ('+ CASE c1.CHARACTER_maximum_LENGTH WHEN '-1' THEN 'MAX' ELSE CAST(c1.CHARACTER_maximum_LENGTH AS VARCHAR) END +')'
+		ELSE C1.DATA_TYPE    
+		END    
+		 +' ' + CASE C1.IS_NULLABLE WHEN 'YES' THEN 'NULL' WHEN 'NO' THEN     
+					CASE ISNULL(C1.COLUMN_DEFAULT,'') WHEN '' THEN 'NULL' ELSE 'NOT NULL' END    
+				END    
+		 + ' '+ 
+		 (CASE ISNULL(C1.COLUMN_DEFAULT,'') WHEN '' THEN
+		 (CASE WHEN c3.columnname IS NOT NULL THEN 'IDENTITY' ELSE '' END) 
+		 ELSE 'DEFAULT '+ C1.COLUMN_DEFAULT END)    
+		 ,'COLUMN',0    
+		FROM DBO.INF_SCHEMA_COLUMNS C1    
+	   JOIN dbo.INF_SCHEMA_TABLES T1 ON T1.TABLE_NAME = C1.TABLE_NAME    
+	   LEFT JOIN dbo.INF_SCHEMA_IDENTITY_COLUMNS C3 ON C3.COLUMNNAME=C1.COLUMN_NAME AND c3.tablename=c1.TABLE_NAME
+	   LEFT JOIN INFORMATION_SCHEMA.COLUMNS  C2    
+		ON C1.TABLE_NAME = C2.TABLE_NAME  AND C1.COLUMN_NAME = C2.COLUMN_NAME    
+		WHERE  C1.TABLE_NAME NOT IN (SELECT ISNULL(TableName,'') FROM TblMismatchScript WITH(NOLOCK))    
+		AND T1.TABLE_TYPE = 'BASE TABLE' AND C2.COLUMN_NAME IS NULL     
+		AND LEFT(t1.TABLE_NAME,10)<>'INF_SCHEMA'
+		ORDER BY C1.TABLE_NAME,C1.ORDINAL_POSITION     
+	    
+			SET @nStep  = 30    
+	  ----CREATE SCRIPT OF ADD PRIMARY KEY ON TABLE----    
+	  INSERT INTO TblMismatchScript(Script,ScriptType,Flag)    
+	  SELECT 'ALTER TABLE '+T1.TABLE_NAME + ' ADD CONSTRAINT '+T1.CONSTRAINT_NAME + ' PRIMARY KEY ('    
+		+ STUFF((SELECT ','+COLUMN_NAME FROM DBO.INF_SCHEMA_KEY_COLUMN_USAGE KU     
+		 WHERE T1.CONSTRAINT_NAME = KU.CONSTRAINT_NAME ORDER BY KU.ORDINAL_POSITION FOR XML PATH('') ),1,1,'')     
+		+')','PRIMARY',0    
+	  FROM DBO.INF_SCHEMA_TABLE_CONSTRAINTS T1    
+	  LEFT JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS T2    
+		ON T1.CONSTRAINT_NAME = T2.CONSTRAINT_NAME    
+	  WHERE T2.CONSTRAINT_NAME IS NULL AND T1.CONSTRAINT_TYPE ='PRIMARY KEY'    
+	        
+		SET @nStep  = 40    
+	  ----CREATE SCRIPT OF ADD UNIQUE KEY ON TABLE----    
+	  INSERT INTO TblMismatchScript(Script,ScriptType,Flag)    
+	  SELECT 'ALTER TABLE '+T1.TABLE_NAME + ' ADD CONSTRAINT '+T1.CONSTRAINT_NAME + ' UNIQUE ('    
+		 + STUFF((SELECT ','+COLUMN_NAME FROM DBO.INF_SCHEMA_KEY_COLUMN_USAGE KU     
+		  WHERE T1.CONSTRAINT_NAME = KU.CONSTRAINT_NAME ORDER BY KU.ORDINAL_POSITION FOR XML PATH('') ),1,1,'')     
+		 +')','UNIQUE',0    
+	  FROM DBO.INF_SCHEMA_TABLE_CONSTRAINTS T1    
+	   LEFT JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS T2    
+		 ON T1.CONSTRAINT_NAME = T2.CONSTRAINT_NAME    
+	  WHERE T2.CONSTRAINT_NAME IS NULL AND T1.CONSTRAINT_TYPE ='UNIQUE'    
+	      
+	  SET @nStep  = 50    
+	      
+	  ---GENERATE SCRIPT FOR ADDING FOREIGN KEY CONSTRAINT----    
+	  INSERT INTO TblMismatchScript(Script,ScriptType,Flag)    
+	  SELECT 'ALTER TABLE '+CH.TABLE_NAME + ' WITH NOCHECK ADD CONSTRAINT '+RC.CONSTRAINT_NAME + ' FOREIGN KEY ('    
+	   + STUFF((SELECT ','+COLUMN_NAME FROM DBO.INF_SCHEMA_KEY_COLUMN_USAGE KU     
+		 WHERE CH.CONSTRAINT_NAME = KU.CONSTRAINT_NAME ORDER BY KU.ORDINAL_POSITION FOR XML PATH('') ),1,1,'')     
+		+') REFERENCES '+ PT.TABLE_NAME + '('+STUFF((SELECT ','+COLUMN_NAME FROM DBO.INF_SCHEMA_KEY_COLUMN_USAGE KU     
+		 WHERE PT.CONSTRAINT_NAME = KU.CONSTRAINT_NAME ORDER BY KU.ORDINAL_POSITION FOR XML PATH('') ),1,1,'')+')'    
+		,'FOREIGN',0    
+	  FROM DBO.INF_SCHEMA_CONSTRAINT_REFERENTIAL_CONSTRAINTS RC    
+		JOIN DBO.INF_SCHEMA_TABLE_CONSTRAINTS CH ON RC.CONSTRAINT_NAME = CH.CONSTRAINT_NAME    
+		JOIN DBO.INF_SCHEMA_TABLE_CONSTRAINTS PT ON RC.UNIQUE_CONSTRAINT_NAME = PT.CONSTRAINT_NAME    
+	  JOIN(    
+		SELECT T1.TABLE_NAME,T1.CONSTRAINT_NAME    
+		FROM DBO.INF_SCHEMA_TABLE_CONSTRAINTS T1    
+		LEFT JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS T2    
+		 ON T1.CONSTRAINT_NAME = T2.CONSTRAINT_NAME    
+		WHERE T2.CONSTRAINT_NAME IS NULL AND T1.CONSTRAINT_TYPE ='FOREIGN KEY'    
+		--AND T1.TABLE_NAME ='TbMst_City'    
+		)T ON T.CONSTRAINT_NAME = RC.CONSTRAINT_NAME    
+	    
+			SET @nStep  = 60    
+	            
+	  -----INSERT INTO CHECK CONSTRAINT-----    
+	  INSERT INTO TblMismatchScript(Script,ScriptType,Flag)    
+	  SELECT DISTINCT 'ALTER TABLE '+ S.TABLE_NAME + ' with nocheck ADD CONSTRAINT '+S.CONSTRAINT_NAME + ' CHECK '+C.CHECK_CLAUSE,'CHECK',0    
+	  FROM DBO.INF_SCHEMA_CONSTRAINT_COLUMN_USAGE S    
+	  JOIN  DBO.INF_SCHEMA_CHECK_CONSTRAINTS C ON S.CONSTRAINT_NAME = C.CONSTRAINT_NAME    
+	  LEFT JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE T ON S.COLUMN_NAME = T.COLUMN_NAME AND S.CONSTRAINT_NAME = T.CONSTRAINT_NAME     
+	  WHERE T.CONSTRAINT_NAME IS NULL    
+	      
+	  SET @nStep  = 65
+
+	  --ADD DEFAULT CONSRTRAINT------    
+	  INSERT INTO TblMismatchScript(Script,ScriptType,Flag)    
+	  SELECT 'ALTER TABLE '+S.TABLE_NAME + ' ADD CONSTRAINT DF_'+S.TABLE_NAME+'_'+S.COLUMN_NAME+ ' DEFAULT '+ S.COLUMN_DEFAULT + ' FOR '+S.COLUMN_NAME    
+		  ,'DEFAULT',0    
+	  FROM DBO.INF_SCHEMA_COLUMNS S    
+		LEFT JOIN INFORMATION_SCHEMA.COLUMNS T     
+		 ON S.TABLE_NAME = T.TABLE_NAME AND S.COLUMN_NAME = T.COLUMN_NAME    
+	  WHERE S.COLUMN_DEFAULT IS NOT NULL AND T.COLUMN_DEFAULT IS NULL     
+	  AND S.TABLE_NAME NOT IN (SELECT ISNULL(TableName,'') FROM TblMismatchScript WITH(NOLOCK))    
+	  ORDER BY S.TABLE_NAME    
+
+	
+	  SET @nStep  = 68
+	  	       
+	   ---ALTER COLUMN, DROP CONSTRAINT AND CREATE CONSTRAINT---    
+	   DECLARE @TBLDEFAULTCONSTRAINT AS TABLE(CONSTRAINT_DROP NVARCHAR(2000),COLUMN_ALTER NVARCHAR(2000),CONSTRAINT_CREATE NVARCHAR(2000))    
+	    
+	   INSERT INTO @TBLDEFAULTCONSTRAINT(CONSTRAINT_DROP,COLUMN_ALTER,CONSTRAINT_CREATE)    
+	   SELECT   CASE ISNULL(C1.COLUMN_DEFAULT,'') WHEN '' THEN '' ELSE     
+		'ALTER TABLE '+C1.TABLE_NAME +' DROP CONSTRAINT '+T.[DEFAULT_CONSTRAINT]     
+		  END AS [CONSTRAINT_DROP]    
+		  ,'SP3S_HANDLE_FK_TABLES_COLUMN @TABLE_NAME = '''+C1.TABLE_NAME+''', @COLUMN_NAME ='''+C1.COLUMN_NAME+'''    
+		,@FLAG = 1,@COLUMN_LENGTHPara ='''+    
+		CASE WHEN C1.DATA_TYPE IN ('DECIMAL','NUMERIC') THEN C1.DATA_TYPE +' ('+ CAST(C1.NUMERIC_PRECISION AS VARCHAR)+','+CAST(C1.NUMERIC_SCALE AS VARCHAR)+')'    
+		     WHEN c1.DATA_TYPE IN ('VARCHAR','CHAR') THEN c1.DATA_TYPE +' ('+ CASE c1.CHARACTER_MAXIMUM_LENGTH WHEN '-1' THEN 'MAX' ELSE CAST(c1.CHARACTER_MAXIMUM_LENGTH AS VARCHAR) END +')'
+		     WHEN c1.DATA_TYPE IN ('NVARCHAR','NCHAR','VARBINARY') THEN c1.DATA_TYPE +' ('+ CASE c1.CHARACTER_maximum_LENGTH WHEN '-1' THEN 'MAX' ELSE CAST(c1.CHARACTER_maximum_LENGTH AS VARCHAR) END +')'
+		ELSE C1.DATA_TYPE    
+		END +' ' + CASE C1.IS_NULLABLE WHEN 'YES' THEN 'NULL' WHEN 'NO' THEN 'NOT NULL'    
+				   END  + ''''    
+		  , CASE ISNULL(C1.COLUMN_DEFAULT,'') WHEN '' THEN '' ELSE     
+		'ALTER TABLE '+C1.TABLE_NAME +' ADD CONSTRAINT '+T.[DEFAULT_CONSTRAINT] +' DEFAULT '+C1.COLUMN_DEFAULT + ' FOR '+C1.COLUMN_NAME    
+		END AS [CONSTRAINT_CREATE]    
+		FROM DBO.INF_SCHEMA_COLUMNS C1    
+	  JOIN dbo.INF_SCHEMA_TABLES T1 ON T1.TABLE_NAME = C1.TABLE_NAME    
+	  LEFT JOIN INFORMATION_SCHEMA.COLUMNS  C2    
+	   ON C1.TABLE_NAME = C2.TABLE_NAME  AND C1.COLUMN_NAME = C2.COLUMN_NAME    
+		LEFT JOIN (    
+		   SELECT T.name AS [TABLE_NAME],C.name AS [COLUMN_NAME],O.name AS [DEFAULT_CONSTRAINT]     
+		   FROM SYSOBJECTS O     
+		   INNER JOIN SYSCOLUMNS C ON O.ID = C.CDEFAULT    
+		   INNER JOIN SYSOBJECTS T ON C.ID = T.ID    
+		   WHERE O.XTYPE = 'D'     
+		   )T ON C1.TABLE_NAME = T.TABLE_NAME AND C1.COLUMN_NAME = T.COLUMN_NAME    
+	         
+	  WHERE C1.TABLE_NAME NOT IN (SELECT ISNULL(TableName,'') FROM TblMismatchScript WITH(NOLOCK))    
+	   AND T1.TABLE_TYPE = 'BASE TABLE'    
+		AND ( C2.DATA_TYPE IS NULL OR (ISNULL(C1.CHARACTER_MAXIMUM_LENGTH,0) <> ISNULL(C2.CHARACTER_MAXIMUM_LENGTH,0))    
+		  OR (ISNULL(C1.NUMERIC_PRECISION,0) <> ISNULL(C2.NUMERIC_PRECISION,0))    
+		  OR (ISNULL(C1.NUMERIC_SCALE,0) <> ISNULL(C2.NUMERIC_SCALE,0))
+		  OR (ISNULL(C1.IS_NULLABLE,'') <> ISNULL(C2.IS_NULLABLE,'')) AND ISNULL(C2.IS_NULLABLE,0)='NO' 
+			--- Have to put back above condition of null status comparison because it is giving error
+			--- If we are changing from null to non null and already null values are lying
+			--- Need to discuss with Sir (Sanjay:31-08-2022)
+		 )     
+	   AND LEFT(T1.TABLE_NAME,10)<>'INF_SCHEMA' AND c1.DATA_TYPE<>'timestamp'
+	     
+	   INSERT INTO TblMismatchScript(Script,ScriptType,Flag)    
+	   SELECT CONSTRAINT_DROP,'DEFAULT-DROP',0 FROM @TBLDEFAULTCONSTRAINT WHERE ISNULL(CONSTRAINT_DROP,'') <> ''    
+	   UNION ALL    
+	   SELECT COLUMN_ALTER,'COLUMN-ALTER',0 FROM @TBLDEFAULTCONSTRAINT WHERE ISNULL(COLUMN_ALTER,'') <> ''    
+	   UNION ALL    
+	   SELECT CONSTRAINT_CREATE,'DEFAULT-CREATE',0 FROM @TBLDEFAULTCONSTRAINT WHERE ISNULL(CONSTRAINT_CREATE,'') <> ''    
+	      
+	 --UPDATE MISMATCH TABLE SRIPT    
+	     
+	 UPDATE TblMismatchScript SET Script = Script + ' ,@SrNo = '+CAST(SrNo AS VARCHAR) WHERE ScriptType =  'COLUMN-ALTER'     
+	 
+	 INSERT INTO TblMismatchScript(Script,ScriptType,Flag)
+	 SELECT 'Delete from xntype_userprocversion_log','maintenance',0
+
+	 INSERT INTO TblMismatchScript(Script,ScriptType,Flag)
+	 SELECT 'Delete from modules_proc','maintenance',0
+
+ END    
+ IF @nMode = 2    
+ BEGIN    
+         
+     SET @nStep  = 80    
+         
+     SELECT @nLoop_END = COUNT(1) FROM DBO.TblMismatchScript WITH(NOLOCK)    
+     SET @nLoop_Start = 1    
+         
+     WHILE @nLoop_End >= @nLoop_Start    
+     BEGIN    
+           
+AGEIN_START:    
+		IF @FLAG = 1    
+		BEGIN    
+			 SET @NLOOP_START = @NLOOP_START +1;    
+			 SET @FLAG = 0;  
+			 IF @nLoop_Start > @nLoop_End 
+			 begin
+			   GOTO PROC_END;
+			 end  
+		END    
+           
+		SELECT @sSQL = Script +'; ',@ScriptType = ScriptType,@nScriptFlag = Flag    
+		FROM TblMismatchScript WITH(NOLOCK) WHERE SrNo = @nLoop_Start    
+              
+		IF ISNULL(@nScriptFlag,0) = 0    
+		BEGIN    
+			 EXEC(@sSQL)    
+	               
+			 IF @ScriptType <> 'COLUMN-ALTER'    
+			 BEGIN    
+				UPDATE TblMismatchScript SET Flag = 1 WHERE SrNo = @nLoop_Start    
+			 END    
+		END    
+                  
+             
+		SET @nLoop_Start = @nLoop_Start +1;    
+        
+		IF @nLoop_Start > @nLoop_End    
+		   GOTO PROC_END;    
+	 END    
+    
+ END    
+
+END TRY    
+BEGIN CATCH    
+	 print 'enter catch'
+	 
+	 if @nMode=1
+		SET @nLoop_Start=1
+		
+     SET @Errmsg =' ERROR MESSAGE'+ ERROR_MESSAGE()+CAST(@nLoop_Start as varchar)  
+     
+     IF @nMode=2   
+		UPDATE TblMismatchScript SET errmsg=@Errmsg WHERE SrNo = @nLoop_Start    
+	 else
+		UPDATE TblMismatchScript SET errmsg='Step#'+str(@nStep)+' '+@Errmsg
+	 
+  END CATCH    
+      
+  IF ISNULL(@Errmsg,'') <> '' 
+  BEGIN    
+	IF @nMode = 2    
+	BEGIN
+		UPDATE TblMismatchScript SET Flag = 1 WHERE SrNo = @nLoop_Start   
+		SET @FLAG = 1    
+		GOTO PROC_ERROR;    
+    END
+  END    
+      
+  PROC_END:    
+      
+  IF @nMode = 1    
+     SELECT SrNo,Script,[Errmsg] FROM TblMismatchScript WITH(NOLOCK) ORDER BY SrNo ASC    
+  IF @nMode = 2    
+     SELECT @Errmsg AS [Errmsg]    
+      
+END 

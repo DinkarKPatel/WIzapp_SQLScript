@@ -1,0 +1,12 @@
+CREATE procEDURE SP_WSLINV_15--(LocId 3 digit change only increased the parameter width by Sanjay:04-11-2024)
+	@CMEMOID	VARCHAR(40) = '',
+	@CWHERE1	VARCHAR(500) = '',
+	@NNAVMODE	NUMERIC(1,0) = 0,
+	@CWHERE2	NVARCHAR(MAX)='',
+	@DMEMODT DATETIME='',
+	@CLOCID		VARCHAR(4)=''
+----WITH ENCRYPTION
+AS
+BEGIN
+	EXEC SP_PYMTDETAILS 2,'WSL','',''    
+END

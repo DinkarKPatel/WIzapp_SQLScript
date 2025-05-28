@@ -1,0 +1,1 @@
+update  rep_det set key_col='Value_at_Transaction_MRP' where key_col='Transaction_Value_at_MRP'

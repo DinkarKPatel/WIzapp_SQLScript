@@ -1,0 +1,363 @@
+
+create PROCEDURE SP_INVWSLORD_PASTE
+(
+ @NSPID VARCHAR(50),
+ @CDEPT_ID CHAR(4),
+ @CORDER_ID VARCHAR(MAX),
+ @CUSERCODE varchar(10)=''
+)
+AS
+BEGIN
+    --(dinkar) Replace  left(memoid,2) to Location_code   
+      
+      DECLARE @DTSQL NVARCHAR(MAX),@CORDJOIN VARCHAR(100),@CINDJOIN VARCHAR(100),
+      @CBARCODEWISEORDER VARCHAR(5),@CERRMSG VARCHAR(MAX),@NCNTORD INT,@NSTEP VARCHAR(10)
+      SET @CERRMSG=''
+    BEGIN TRY
+        
+     
+	
+	
+	SET @NSTEP=20	
+	
+	  IF EXISTS (SELECT TOP 1 'U' FROM WSL_ORDER_ID  WHERE  SP_ID=RTRIM(LTRIM(@NSPID)) AND ORDER_ID<>'')
+         BEGIN
+              
+              
+              DECLARE @CJOIN VARCHAR(MAX),@CBDJOIN varchar(max)
+              
+              SET @CJOIN=''
+			  set @CBDJOIN=''
+           
+
+			  IF OBJECT_ID('TEMPDB..#TMPCONFIG','U') IS NOT NULL
+			     DROP TABLE #TMPCONFIG
+
+			  SELECT COLUMN_NAME , 
+			  CASE WHEN LEFT(COLUMN_NAME,4)='ATTR' THEN  REPLACE(COLUMN_NAME,'KEY_NAME','MST')
+			       WHEN LEFT(COLUMN_NAME,4)='PARA' THEN  REPLACE(COLUMN_NAME,'_NAME','')
+				   WHEN COLUMN_NAME='ARTICLE_NO' THEN  'ARTICLE'
+				   WHEN COLUMN_NAME='SECTION_NAME' THEN  'SECTIONM'
+				   WHEN COLUMN_NAME='SUB_SECTION_NAME' THEN  'SECTIOND'
+			  ELSE COLUMN_NAME END  AS TABLENAME,
+			  CASE WHEN COLUMN_NAME='ARTICLE_NO' THEN  'ARTICLE_CODE'
+			       ELSE REPLACE(COLUMN_NAME,'_NAME','_CODE' ) END AS COLUMN_CODE ,
+			 CAST('' AS VARCHAR(1000)) AS JOINS,
+			 CAST('' AS VARCHAR(1000)) AS bdJOINS
+			  INTO #TMPCONFIG
+			  FROM CONFIG_BUYERORDER
+			  WHERE COLUMN_NAME NOT IN('MRP_FROM_TO','product_code')
+			  AND ISNULL(OPEN_KEY,0)=1
+
+
+			
+
+			UPDATE A SET JOINS= '  JOIN '+TABLENAME+' (NOLOCK) ON '+TABLENAME+'.'+COLUMN_CODE + 
+			CASE WHEN LEFT(TABLENAME,4)='ATTR' THEN '=ARTICLE_FIX_ATTR.'
+			ELSE  '=SKU.' END
+			+COLUMN_CODE +' '  FROM #TMPCONFIG A
+			WHERE LEFT(TABLENAME,4) IN('PARA','ATTR')
+
+
+			SELECT @CJOIN =ISNULL(@CJOIN+' ','')+JOINS  FROM #TMPCONFIG WHERE JOINS<>''
+			UPDATE #TMPCONFIG SET BDJOINS ='SKU'+'.'+COLUMN_CODE + '=isnull(BD.'+COLUMN_CODE+','+'SKU'+'.'+COLUMN_CODE+')'
+			SELECT @CBDJOIN =ISNULL(@CBDJOIN+' and  ','')+BDJOINS  FROM #TMPCONFIG 
+			
+			IF EXISTS (SELECT TOP 1'U' FROM CONFIG_BUYERORDER WHERE COLUMN_NAME ='MRP_FROM_TO' AND ISNULL(OPEN_KEY,0)=1)
+			   SET @CBDJOIN=@CBDJOIN+' and SKU.MRP BETWEEN  BD.From_mrp AND BD.to_mrp '
+
+			
+              
+             IF  EXISTS (SELECT TOP 1 'U' from WSL_ORDER_ID a (nolock)
+			  JOIN BUYER_ORDER_BARCODE_DET B (nolock) ON A.ORDER_ID =B.ORDER_ID 
+			  join buyer_order_mst c (nolock) on b.ORDER_ID=c.order_id 
+			  where c.cancelled=0 and a.sp_id =RTRIM(LTRIM(STR(@NSPID))) )
+			  begin
+
+				  UPDATE A SET BO_DET_ROW_ID=B.REF_ROW_ID,ORDER_ID=B.ORDER_ID  
+				   FROM  WSL_ITEM_DETAILS A (nolock)
+				   join  BUYER_ORDER_BARCODE_DET b (nolock) on a.PRODUCT_CODE =b.PRODUCT_CODE
+				   join buyer_order_mst c (nolock) on b.ORDER_ID=c.order_id 
+				   JOIN WSL_ORDER_ID WSL (NOLOCK) ON WSL.ORDER_ID=B.ORDER_ID AND A.SP_ID=WSL.SP_ID
+				   where c.cancelled=0  and a.sp_id =RTRIM(LTRIM(STR(@NSPID)))
+             
+             end
+			 else   IF  EXISTS (SELECT TOP 1 'U' from WSL_ORDER_ID a (nolock)
+			  JOIN BUYER_ORDER_DET B (nolock) ON A.ORDER_ID =B.ORDER_ID 
+			  join buyer_order_mst c (nolock) on b.ORDER_ID=c.order_id 
+			  where c.cancelled=0 and a.sp_id =RTRIM(LTRIM(STR(@NSPID))) and isnull(b.product_code,'') <>'' )
+			  AND  EXISTS( SELECT TOP 1 'U'    FROM CONFIG_BUYERORDER WHERE COLUMN_NAME='PRODUCT_CODE' AND OPEN_KEY=1)
+			  begin
+			      
+				  
+				    SET @DTSQL=' UPDATE A SET BO_DET_ROW_ID=BD.ROW_ID ,ORDER_ID=BD.ORDER_ID  
+					 FROM  wsl_item_details A
+					 JOIN SKU (NOLOCK) ON A.PRODUCT_CODE=SKU.PRODUCT_CODE 
+					 JOIN BUYER_ORDER_DET BD (NOLOCK) ON  BD.PRODUCT_CODE=LEFT(A.PRODUCT_CODE, ISNULL(NULLIF(CHARINDEX (''@'',A.PRODUCT_CODE)-1,-1),LEN(A.PRODUCT_CODE )))
+					 JOIN WSL_ORDER_ID WSL (NOLOCK) ON WSL.ORDER_ID=BD.ORDER_ID AND A.SP_ID=WSL.SP_ID
+					 WHERE ISNULL(BD.PRODUCT_CODE,'''')<>'''' AND a.SP_ID='''+RTRIM(LTRIM(STR(@NSPID)))+''' 
+					 AND BD.QUANTITY-ISNULL(bd.inv_qty,0)>0 '
+					 PRINT @DTSQL
+					 EXEC SP_EXECUTESQL @DTSQL
+
+				
+             
+			  
+			  end 
+             else
+			 begin
+
+	
+		
+			        IF OBJECT_ID ('TEMPDB..##TMPBODET','U') IS NOT NULL
+				   DROP  TABLE ##TMPBODET
+
+			   DECLARE @CCOLUMNCODE VARCHAR(MAX)
+			   SELECT @CCOLUMNCODE =ISNULL(@CCOLUMNCODE+', ','')+COLUMN_CODE+'=NULLIF('+COLUMN_CODE+',''0000000''' +')'  FROM #TMPCONFIG 
+
+			    if isnull(@CCOLUMNCODE,'')=''
+				   set @CCOLUMNCODE=' 1 as sr'
+
+		         SET @DTSQL=' SELECT a.product_code,a.inv_qty, a.row_id, A.order_id,a.quantity,'+@CCOLUMNCODE+'
+				INTO ##TMPBODET 
+				FROM BUYER_ORDER_DET A (NOLOCK)
+			    JOIN WSL_ORDER_ID WSL (NOLOCK) ON  A.ORDER_ID =WSL.ORDER_ID 
+				WHERE WSL.SP_ID='+RTRIM(LTRIM(STR(@NSPID)))
+				print @DTSQL
+				exec sp_executesql @DTSQL
+
+
+			
+		
+
+				UPDATE WSL_ITEM_DETAILS SET ROW_ID=NEWID() where sp_id=RTRIM(LTRIM(STR(@NSPID)))
+			  
+			    IF OBJECT_ID ('TEMPDB..#TMPWSLITEM','U') IS NOT NULL
+				   DROP  TABLE #TMPWSLITEM
+
+				   SELECT * INTO #TMPWSLITEM FROM WSL_ITEM_DETAILS where sp_id=RTRIM(LTRIM(STR(@NSPID)))
+
+
+				   if object_id ('tempdb..#tmpsku','u') is not null
+				      drop table #tmpsku
+
+
+				   SELECT A.PRODUCT_CODE ,SKU.ARTICLE_CODE  ,SKU.PARA1_CODE ,SKU.PARA2_CODE ,SKU.PARA3_CODE,sku.para4_code ,sku.para5_code,sku.para6_code ,
+						  attr1_key_code,attr2_key_code,attr3_key_code,attr4_key_code,attr5_key_code,
+						  attr6_key_code,attr7_key_code,attr8_key_code,attr9_key_code,attr10_key_code,
+                          attr11_key_code,attr12_key_code,attr13_key_code,attr14_key_code,attr15_key_code,
+                          attr16_key_code,attr17_key_code,attr18_key_code,attr19_key_code,attr20_key_code,
+                          attr21_key_code ,attr22_key_code,attr23_key_code,attr24_key_code,attr25_key_code,
+						  SECTIOND.sub_section_code,SECTIONM.section_code,sku.mrp 
+		            into #tmpsku
+				   FROM WSL_ITEM_DETAILS A
+				   JOIN SKU  ON A.PRODUCT_CODE=sku.PRODUCT_CODE
+				   JOIN ARTICLE (NOLOCK) ON ARTICLE.ARTICLE_CODE=SKU.ARTICLE_CODE
+				   JOIN SECTIOND (NOLOCK) ON SECTIOND.SUB_SECTION_CODE=ARTICLE.SUB_SECTION_CODE 
+				   JOIN SECTIONM (NOLOCK) ON SECTIONM.SECTION_CODE=SECTIOND.SECTION_CODE 
+				   LEFT JOIN ARTICLE_FIX_ATTR (NOLOCK) ON  ARTICLE_FIX_ATTR.ARTICLE_CODE=ARTICLE.ARTICLE_CODE
+				   WHERE A.SP_ID=RTRIM(LTRIM(STR(@NSPID)))
+
+				   
+				
+
+				DECLARE @CROWID VARCHAR(50)
+				WHILE EXISTS (SELECT TOP 1 'U' FROM #TMPWSLITEM)
+				BEGIN
+				     SELECT TOP 1 @CROWID=ROW_ID FROM #TMPWSLITEM
+
+			
+			     SET @DTSQL=' UPDATE A SET BO_DET_ROW_ID=BD.ROW_ID,ORDER_ID=BD.ORDER_ID  
+				 FROM  WSL_ITEM_DETAILS A
+				 JOIN #tmpsku sku on a.product_code=sku.product_code 
+				 '+@CJOIN +'
+				 JOIN ##TMPBODET BD (NOLOCK) ON 1=1
+				 '+@CBDJOIN+'
+				 WHERE  A.SP_ID='''+RTRIM(LTRIM(STR(@NSPID)))+''' 
+				 AND (BD.quantity-ISNULL(INV_QTY,0))-ISNULL(invoice_quantity,0)>=0 
+				 and a.row_id='''+@CROWID+'''
+				 '
+				 PRINT @DTSQL
+				 EXEC SP_EXECUTESQL @DTSQL
+                  
+				 	
+				    UPDATE A SET INV_QTY=A.INV_QTY+ISNULL(B.INVOICE_QUANTITY,0) FROM ##TMPBODET A
+					JOIN WSL_ITEM_DETAILS B ON A.ROW_ID=B.BO_DET_ROW_ID
+					WHERE B.ROW_ID=@CROWID
+                    
+					--PRINT  @CROWID
+				    DELETE FROM #TMPWSLITEM WHERE ROW_ID=@CROWID
+
+				
+
+			   END
+
+			--if EXISTS( SELECT TOP 1 'U'    FROM CONFIG_BUYERORDER WHERE COLUMN_NAME='PRODUCT_CODE' AND OPEN_KEY=1) 
+
+     --        SET @DTSQL=' UPDATE A SET BO_DET_ROW_ID=BD.ROW_ID ,ORDER_ID=BD.ORDER_ID  
+     --        FROM  wsl_item_details A
+     --        JOIN SKU (NOLOCK) ON A.PRODUCT_CODE=SKU.PRODUCT_CODE 
+     --        JOIN BUYER_ORDER_DET BD (NOLOCK) ON  BD.PRODUCT_CODE=LEFT(A.PRODUCT_CODE, ISNULL(NULLIF(CHARINDEX (''@'',A.PRODUCT_CODE)-1,-1),LEN(A.PRODUCT_CODE )))
+     --         JOIN WSL_ORDER_ID WSL (NOLOCK) ON WSL.ORDER_ID=BD.ORDER_ID AND A.SP_ID=WSL.SP_ID
+     --        WHERE ISNULL(BD.PRODUCT_CODE,'''')<>'''' AND a.SP_ID='''+RTRIM(LTRIM(STR(@NSPID)))+'''
+			  --AND (BD.quantity-ISNULL(INV_QTY,0))-ISNULL(invoice_quantity,0)>0   '
+     --        PRINT @DTSQL
+     --        EXEC SP_EXECUTESQL @DTSQL
+
+	
+             
+
+ end
+
+
+		
+             IF EXISTS (SELECT TOP 1 'U' FROM wsl_item_details WHERE SP_ID=RTRIM(LTRIM(@NSPID)) AND ( ISNULL(BO_DET_ROW_ID,'')='' OR ISNULL(order_id,'')=''))
+             BEGIN
+                  
+                    UPDATE A SET errmsg =' BUYER DETAILS NOT FOUND PLEASE CHECK' 
+					FROM wsl_item_details A (NOLOCK)
+					WHERE SP_ID=RTRIM(LTRIM(@NSPID))
+					AND ( ISNULL(BO_DET_ROW_ID,'')='' OR ISNULL(order_id,'')='')
+
+					GOTO END_PROC
+             END
+
+			   
+			   IF OBJECT_ID('TEMPDB..#TMPINV_QTY','U') IS NOT NULL
+			      drop table #TMPINV_QTY
+				
+				SELECT A.BO_DET_ROW_ID, a.INVOICE_QUANTITY ,bd.bo_qty
+				into #TMPINV_QTY
+				FROM
+				(	
+					SELECT A.ORDER_ID , BO_DET_ROW_ID,SUM(INVOICE_QUANTITY) AS INVOICE_QUANTITY 
+					 FROM WSL_ITEM_DETAILS A
+					WHERE SP_ID=RTRIM(LTRIM(@NSPID))
+					GROUP BY  A.ORDER_ID , BO_DET_ROW_ID
+				) A
+				LEFT JOIN 
+				(
+				  SELECT A.ORDER_ID ,A.ROW_ID AS  BO_DET_ROW_ID,SUM(QUANTITY-ISNULL(INV_QTY,0)) AS BO_QTY
+				  FROM BUYER_ORDER_DET A (NOLOCK) 
+				  JOIN WSL_ORDER_ID B ON A.ORDER_ID =B.ORDER_ID 
+				  WHERE B.SP_ID =RTRIM(LTRIM(@NSPID))
+				  GROUP BY A.ORDER_ID,A.ROW_ID
+				  
+				 ) BD  ON BD.BO_DET_ROW_ID =A.BO_DET_ROW_ID AND A.ORDER_ID =BD.ORDER_ID 
+				 WHERE  INVOICE_QUANTITY>ISNULL(BO_QTY,0)
+				
+				if exists (select top 1 'u' from #TMPINV_QTY)
+				begin
+				   
+				   update a set errmsg='INVOICE QTY Greater than Buyer Qty'  FROM WSL_ITEM_DETAILS A
+					 join #TMPINV_QTY b on a.BO_DET_ROW_ID=b.BO_DET_ROW_ID
+					WHERE SP_ID=RTRIM(LTRIM(@NSPID))
+					  GOTO END_PROC
+				end
+
+
+
+			   
+
+
+   
+     
+     end        
+    ELSE
+    BEGIN
+     
+      SET @NSTEP=30
+      SET @DTSQL= N'UPDATE TMP SET ERRMSG='' INVOICE QTY MISMATCH AGAINST ORDER ''
+      FROM WSL_ITEM_DETAILS TMP (NOLOCK)
+      JOIN SKU (NOLOCK) ON TMP.PRODUCT_CODE=SKU.PRODUCT_CODE
+      JOIN
+      (
+      SELECT A.ARTICLE_CODE,A.PARA1_CODE,A.PARA2_CODE
+      FROM
+        (
+          SELECT SKU.ARTICLE_CODE,SKU.PARA1_CODE,SKU.PARA2_CODE,
+          SUM(a.INVOICE_QUANTITY) AS INV_QTY
+          FROM WSL_ITEM_DETAILS a (NOLOCK)
+          JOIN SKU (NOLOCK) ON A.PRODUCT_CODE=SKU.PRODUCT_CODE
+          WHERE SP_ID='''+LTRIM(RTRIM(STR(@NSPID)))+'''
+          GROUP BY SKU.ARTICLE_CODE,SKU.PARA1_CODE,SKU.PARA2_CODE
+        ) A
+       LEFT JOIN
+       (
+          SELECT B.ARTICLE_CODE,B.PARA1_CODE,B.PARA2_CODE,SUM(B.QUANTITY) AS ORD_QTY
+          FROM BUYER_ORDER_MST A (NOLOCK)
+          JOIN BUYER_ORDER_DET B (NOLOCK) ON A.ORDER_ID=B.ORDER_ID
+          WHERE A.ORDER_ID IN('+@CORDER_ID+')
+          AND CANCELLED=0
+          GROUP BY B.ARTICLE_CODE,B.PARA1_CODE,B.PARA2_CODE
+       ) B ON A.ARTICLE_CODE =B.ARTICLE_CODE AND A.PARA1_CODE=B.PARA1_CODE AND A.PARA2_CODE=B.PARA2_CODE
+       LEFT JOIN
+       (
+         SELECT SKU.ARTICLE_CODE,SKU.PARA1_CODE,SKU.PARA2_CODE,
+          SUM(B.QUANTITY) AS IND_QTY
+          FROM INM01106 A (NOLOCK)
+          JOIN IND01106 B (NOLOCK) ON A.INV_ID=B.INV_ID
+          JOIN SKU (NOLOCK) ON B.PRODUCT_CODE=SKU.PRODUCT_CODE
+          WHERE B.ORDER_ID IN('+@CORDER_ID+')
+          AND CANCELLED=0
+         GROUP BY SKU.ARTICLE_CODE,SKU.PARA1_CODE,SKU.PARA2_CODE
+       ) C  ON A.ARTICLE_CODE =C.ARTICLE_CODE AND A.PARA1_CODE=C.PARA1_CODE AND A.PARA2_CODE=C.PARA2_CODE
+       WHERE A.INV_QTY>(ISNULL(B.ORD_QTY,0)+ISNULL(IND_QTY,0)) 
+       ) A  ON SKU.ARTICLE_CODE=A.ARTICLE_CODE AND SKU.PARA1_CODE=A.PARA1_CODE AND SKU.PARA2_CODE=A.PARA2_CODE '
+      PRINT @DTSQL
+      EXEC SP_EXECUTESQL @DTSQL
+    
+    
+    END
+   
+     SET @NSTEP=40
+    IF EXISTS(SELECT TOP 1 'U' FROM WSL_ITEM_DETAILS (NOLOCK) WHERE sp_id =LTRIM(RTRIM(STR(@NSPID))) AND ISNULL(ERRMSG,'')<>'')
+    BEGIN
+         GOTO END_PROC
+    END
+   
+   Update a set Quantity =invoice_quantity from WSL_ITEM_DETAILS a (nolock) where isnull(Quantity,0)=0 and sp_id=@NSPID
+  
+   --EXEC SP3S_GETWSL_DATA @NSPID,1,0,0,'','WSL',1
+
+   Exec  SP3S_GETWSL_DATA_PASTE
+	 @NSPID=@NSPID,
+	 @NBOXNO =0 ,
+	 @Clocid=@CDEPT_ID,
+	 @BAGAINSTPS =0,
+	 @NDEFAULT_RATE_TYPE =1,-- 1 for wsp 2 for mrp 3 for pp
+	 @NPASTE =1,
+	 @CUSERCODE ='0000000'
+
+   
+   DECLARE @CAPPLY_WSLORD_RATE VARCHAR(10)
+   SELECT @CAPPLY_WSLORD_RATE=VALUE  FROM CONFIG WHERE CONFIG_OPTION ='APPLY_WSLORD_RATE'
+   
+     END TRY
+	  BEGIN CATCH
+			PRINT 'ENTER CATCH BLOCK'
+			SET @CERRMSG='ERROR IN PROCEDURE SP_INVWSLORD_PASTE :'+@NSTEP+ERROR_MESSAGE()
+			GOTO END_PROC 
+	  END CATCH
+ END_PROC: 
+
+ 
+    IF EXISTS(SELECT TOP 1 'U' FROM WSL_ITEM_DETAILS (NOLOCK) WHERE sp_id =LTRIM(RTRIM(STR(@NSPID))) AND ISNULL(ERRMSG,'')<>'') OR ISNULL(@CERRMSG,'')<>''
+    BEGIN
+         
+         SELECT PRODUCT_CODE ,CASE WHEN ISNULL(@CERRMSG,'')<>'' THEN @CERRMSG ELSE ERRMSG END ERRMSG
+         FROM WSL_ITEM_DETAILS  (NOLOCK)
+         WHERE sp_id =LTRIM(RTRIM(STR(@NSPID))) AND ISNULL(ERRMSG,'')<>''
+
+    
+    END
+
+
+--SELECT  * FROM wsl_inv_settings  WHERE SP_ID=247
+
+DELETE FROM WSL_ORDER_ID WHERE SP_ID=LTRIM(RTRIM(STR(@NSPID)))
+
+--SELECT @CORDER_ID AS ORDER_ID
+
+END
+

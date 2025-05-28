@@ -1,0 +1,61 @@
+CREATE PROCEDURE [DBO].[SPPPC_FILTER_SIZEGROUP]    
+(      
+ @NMODE         INT, --  (1) - VIEW FILTER DATA  (2) - VIEW ID WISE    
+ @SIZEGROUP_CODE     VARCHAR(9)='',      
+ @SIZEGROUP_NAME     VARCHAR(300)='',      
+ @INACTIVE         VARCHAR(5)='',      
+ @ERRMSG_OUT       VARCHAR(MAX) OUT      
+)      
+AS      
+BEGIN      
+ DECLARE @CSTEP INT, @CCMD NVARCHAR(MAX)      
+    
+ BEGIN TRY      
+  SET NOCOUNT ON;    
+  SET @ERRMSG_OUT = ''      
+    
+  --  (1) - VIEW FILTER DATA     
+  SET @CSTEP = 10      
+  IF (@NMODE=1)      
+  BEGIN      
+   SET @CCMD=N' SELECT DISTINCT SG.SIZEGROUP_CODE, SIZEGROUP_NAME, ALIAS, INACTIVE, REMARKS 
+                ,CASE WHEN ISNULL(PS.SIZEGROUP_CODE,'''')='''' THEN 0 ELSE 1 END AS [SET]
+           FROM (    
+           SELECT SIZEGROUP_CODE, SIZEGROUP_NAME, ALIAS,     
+              CASE WHEN ISNULL(INACTIVE, 0) = 0 THEN ''NO'' ELSE ''YES'' END AS INACTIVE, REMARKS     
+           FROM PPC_SIZEGROUP) AS SG 
+           LEFT JOIN PPC_SIZEGROUP_PARA2 PS ON PS.SIZEGROUP_CODE=SG.SIZEGROUP_CODE    
+          WHERE SIZEGROUP_NAME LIKE ''%' + @SIZEGROUP_NAME + '%''      
+          AND INACTIVE LIKE ''%' + @INACTIVE + '%''       
+          ORDER BY SIZEGROUP_NAME '      
+   PRINT @CCMD      
+   EXEC SP_EXECUTESQL @CCMD      
+  END      
+    
+  --  (2) - VIEW ID WISE    
+  SET @CSTEP = 20      
+  IF (@NMODE=2)      
+  BEGIN      
+   SET @CCMD=N' SELECT SIZEGROUP_CODE, SIZEGROUP_NAME, ALIAS, INACTIVE, REMARKS FROM (    
+           SELECT SIZEGROUP_CODE, SIZEGROUP_NAME, ALIAS,     
+              CASE WHEN ISNULL(INACTIVE, 0) = 0 THEN ''NO'' ELSE ''YES'' END AS INACTIVE, REMARKS     
+           FROM PPC_SIZEGROUP) AS SG    
+          WHERE SIZEGROUP_CODE = ''' + @SIZEGROUP_CODE + ''' '    
+   PRINT @CCMD    
+   EXEC SP_EXECUTESQL @CCMD    
+  END    
+      
+  SET NOCOUNT OFF;    
+      
+ END TRY        
+ BEGIN CATCH        
+  SET @ERRMSG_OUT='ERROR: [P]: SPPPC_FILTER_SIZEGROUP, [STEP]: '+CAST(@CSTEP AS VARCHAR(5))+', [MESSAGE]: ' + ERROR_MESSAGE()      
+  PRINT @ERRMSG_OUT      
+    
+  GOTO END_PROC        
+ END CATCH         
+    
+END_PROC:        
+ IF  ISNULL(@ERRMSG_OUT,'')=''       
+  SET @ERRMSG_OUT = ''      
+END

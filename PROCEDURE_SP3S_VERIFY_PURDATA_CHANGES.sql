@@ -1,0 +1,62 @@
+create PROCEDURE SP3S_VERIFY_PURDATA_CHANGES
+@cMemoId VARCHAR(40)='',
+@nSpId VARCHAR(50)='',
+@BBYPASSDETINSERT BIT
+AS
+BEGIN
+	
+	DECLARE @CFILTERCONDITION VARCHAR(1000),@CINSSPID VARCHAR(40),@CJOINSTR VARCHAR(500),
+	@CDESTTABLE VARCHAR(200),@cUploadTableName VARCHAR(200),@cSpIdCol VARCHAR(100),@CINSSPIDCol VARCHAR(200),
+	@cSpId VARCHAR(50)
+
+	SELECT @cSpIdCol= 'sp_id' ,
+		   @CINSSPIDCol='',
+		   @cSpId= @nSpId 
+
+	PRINT 'gen tempdata for 1'
+	SET @CFILTERCONDITION=' b.mrr_id='''+@cMemoId+''''
+
+	
+	set @CINSSPID=LEFT(@nSpId,38)+LEFT(@cMemoId,2)
+	
+
+	SELECT @cUploadTableName='pur_pim01106_UPLOAD'
+			
+	EXEC UPDATEMASTERXN_MIRROR @CSOURCEDB='',@CSOURCETABLE='pim01106',@CDESTDB=''
+								,@CDESTTABLE=@cUploadTableName,@CKEYFIELD1='mrr_id',@CKEYFIELD2='',@CKEYFIELD3=''
+								,@LINSERTONLY=1,@CFILTERCONDITION=@CFILTERCONDITION,@LUPDATEONLY=0
+								,@BALWAYSUPDATE=0,@BUPDATEXNS=1,@CINSSPID=@CINSSPID,@CINSSPIDCol=@CINSSPIDCol
+								,@CSEARCHTABLE='pim01106',@cXnType='PUR'
+	
+	PRINT 'gen tempdata for 2'
+	EXEC SP3S_GENFILTERED_UPDATESTR
+	@cSpId=@cSpId ,
+	@cInsSpId=@cInsSpId,
+	@cTableName='pim01106',
+	@cUploadTableName=@cUploadTableName,
+	@cKeyfield='mrr_id',
+	@cSpIdCol=@cSpIdCol
+	
+	IF @BBYPASSDETINSERT=1
+		RETURN
+
+	SELECT @cUploadTableName='pur_pid01106_upload'
+
+	
+	PRINT 'gen tempdata for 3'
+	EXEC UPDATEMASTERXN_MIRROR @CSOURCEDB='',@CSOURCETABLE='pid01106',@CDESTDB=''
+								,@CDESTTABLE=@cUploadTableName,@CKEYFIELD1='MRR_id',@CKEYFIELD2='',@CKEYFIELD3=''
+								,@LINSERTONLY=1,@CFILTERCONDITION=@CFILTERCONDITION,@LUPDATEONLY=0,@cXnType='PUR'
+								,@BALWAYSUPDATE=0,@BUPDATEXNS=1,@CINSSPID=@CINSSPID,@CINSSPIDCol=@CINSSPIDCol,@CSEARCHTABLE='PId01106'	
+	
+	PRINT 'gen tempdata for 4'
+	EXEC SP3S_GENFILTERED_UPDATESTR
+	@cSpId=@cSpId ,
+	@cInsSpId=@cInsSpId,
+	@cTableName='pid01106',
+	@cUploadTableName=@cUploadTableName,
+	@cKeyfield='row_id',
+	@cSpIdCol=@cSpIdCol,
+	@bDonotChkLastUpdate=1,
+	@cSkipCols='auto_srno'
+END

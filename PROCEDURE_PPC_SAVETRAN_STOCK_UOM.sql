@@ -1,0 +1,106 @@
+CREATE PROC PPC_SAVETRAN_STOCK_UOM                    
+@NMODE   INT, --(0)-INSERT, (2) - UPDATE                     
+@STOCKUOMNAME VARCHAR(100),       
+@STOCKUOMCODE VARCHAR(100),        
+@BOM_UOM_CODE VARCHAR (50),  
+@CONVERUOMVALUE DECIMAL(10,4),  
+@BINACTIVE INT=0,  
+@STATUS INT OUTPUT      
+                              
+AS                                           
+BEGIN                            
+                               
+BEGIN TRY    
+BEGIN TRANSACTION                
+ DECLARE @CNEW_STOCKUOM_CODE VARCHAR(10),@CERRMSG VARCHAR(1000)               
+ SET @CERRMSG=''  
+ DECLARE @CDEPT_ID VARCHAR(2),@CMEMO_PREFIX VARCHAR(10)
+ 
+ SELECT @CDEPT_ID=VALUE FROM CONFIG WHERE CONFIG_OPTION='LOCATION_ID'
+ SET @CMEMO_PREFIX=@CDEPT_ID
+ 
+ IF @NMODE=0
+    BEGIN 
+	 IF NOT EXISTS (SELECT * FROM ARTICLE WHERE  UOM_CODE=@STOCKUOMCODE )
+	   BEGIN
+		DELETE FROM UOM WHERE UOM_CODE =@STOCKUOMCODE
+		SET @STATUS=1          
+	    SET @CERRMSG='RECORD DELETED.' 
+	   END
+	 ELSE 
+		BEGIN
+			SET @STATUS=0          
+			SET @CERRMSG='RECORD NOT DELETED DUE TO FOREIGN KEY REFERENCE.' 
+		END
+    END         
+ ELSE IF @NMODE=1  
+     BEGIN                                                               
+		 IF  EXISTS(SELECT * FROM UOM  WHERE UOM_NAME=@STOCKUOMNAME)     
+		 BEGIN
+		   SET @CERRMSG='UOM ALREADY EXISTS.' 
+		   SET @STATUS=0   
+		   GOTO END_PROC
+		 END   
+
+		NEWUOM:                                                       
+			EXEC GETNEXTKEY @CTABLENAME='UOM'                         
+		   ,@CCOLNAME='UOM_CODE'                          
+		   ,@NWIDTH='7'                          
+		   ,@CPREFIX=@CMEMO_PREFIX                          
+		   ,@NLZEROS=1                          
+		   ,@CFINYEAR=''                          
+		   ,@NROWCOUNT=0                          
+		   ,@CNEWKEYVAL=@CNEW_STOCKUOM_CODE OUTPUT                           
+		                                 
+	   IF EXISTS(SELECT TOP 1 'U' FROM UOM WHERE UOM_CODE =@CNEW_STOCKUOM_CODE)                     
+	   GOTO NEWUOM                       
+		                              
+	   INSERT UOM(UOM_TYPE,INACTIVE,UOM_CODE,UOM_NAME,LAST_UPDATE)  
+	   SELECT 1 AS UOM_TYPE,@BINACTIVE AS INACTIVE,@CNEW_STOCKUOM_CODE AS UOM_CODE,@STOCKUOMNAME AS UOM_NAME,GETDATE() AS LAST_UPDATE
+	   
+		INSERT PPC_UOM_CONVERSION	( UOM_CODE, CONVERSION_UOM_CODE, CONVERSION_VALUE )  
+		SELECT 	  UOM_CODE=@CNEW_STOCKUOM_CODE, CONVERSION_UOM_CODE=@BOM_UOM_CODE, CONVERSION_VALUE=@CONVERUOMVALUE
+
+	   SET @STATUS=1          
+	   SET @CERRMSG='RECORD SAVE.'                                                    
+	END    
+ELSE
+	BEGIN     
+	   UPDATE A SET UOM_NAME =@STOCKUOMNAME,INACTIVE =@BINACTIVE,LAST_UPDATE =GETDATE()  FROM UOM   A WHERE UOM_CODE =@STOCKUOMCODE
+	 
+	   IF EXISTS (SELECT TOP 1 'U' FROM PPC_UOM_CONVERSION WHERE  UOM_CODE=@STOCKUOMCODE )
+		   BEGIN
+			   UPDATE PPC_UOM_CONVERSION SET CONVERSION_UOM_CODE=@BOM_UOM_CODE,CONVERSION_VALUE=@CONVERUOMVALUE WHERE UOM_CODE =@STOCKUOMCODE
+			   SET @STATUS=1          
+			   SET @CERRMSG='RECORD UPDATE.'  
+			   GOTO END_PROC        
+		   END
+	   ELSE
+		   BEGIN		
+			   INSERT PPC_UOM_CONVERSION	( UOM_CODE, CONVERSION_UOM_CODE, CONVERSION_VALUE )  
+			   SELECT UOM_CODE=@STOCKUOMCODE, 
+			   CONVERSION_UOM_CODE=@BOM_UOM_CODE, CONVERSION_VALUE=@CONVERUOMVALUE 
+				
+			   SET @STATUS=1          
+			   SET @CERRMSG='RECORD UPDATE.'  
+			   GOTO END_PROC        		 
+		   END                            
+	 END    
+ 
+END TRY    
+BEGIN CATCH     
+ SET @CERRMSG='SAVETRAN_BOMUOM_MASTER: STEP  MESSAGE - '+ERROR_MESSAGE()     
+END CATCH    
+    
+END_PROC:    
+    
+IF @@TRANCOUNT>0      
+ BEGIN      
+  IF ISNULL(@STATUS,0)=1     
+   COMMIT TRANSACTION      
+  ELSE      
+   ROLLBACK      
+ END             
+
+    SELECT @CERRMSG AS ERRMSG,ISNULL(@STATUS,0) AS PKEY            
+ END

@@ -1,0 +1,2 @@
+---Discarded this Procedure calling and it is now replaced with Procedure [SP3S_CREATE_USERVERSION_TABLES]  calling
+--- at the time of User Login where all user version tables and Procedreus will be recrated (Date :16-09-2022)

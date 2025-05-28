@@ -1,0 +1,1 @@
+UPDATE eosssorm SET location_Code=left(memo_id,2)  where location_code is null

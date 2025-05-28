@@ -1,0 +1,1 @@
+UPDATE location SET invoice_control_ac_code=dept_ac_code WHERE ISNULL(invoice_control_ac_code,'') IN ('','0000000000')

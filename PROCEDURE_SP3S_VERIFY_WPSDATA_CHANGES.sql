@@ -1,0 +1,38 @@
+CREATE PROCEDURE SP3S_VERIFY_WPSDATA_CHANGES
+@cMemoId VARCHAR(40),
+@nSpId VARCHAR(50)=''
+AS
+BEGIN
+	
+	DECLARE @CFILTERCONDITION VARCHAR(1000),@CINSSPID VARCHAR(40),@CJOINSTR VARCHAR(500),@cSuffix VARCHAR(20),
+	@CDESTTABLE VARCHAR(200),@cUploadTableName VARCHAR(200),@cSpIdCol VARCHAR(100),@CINSSPIDCol VARCHAR(200),
+	@cSpId VARCHAR(50)
+	PRINT 'gen tempdata for 1'
+	SET @CFILTERCONDITION=' b.ps_id='''+@cMemoId+''''
+	set @CINSSPID=@cMemoId+LEFT(@cMemoId,2)
+
+	SELECT @cSuffix='UPLOAD',
+		   @cSpIdCol='sp_id' ,
+		   @CINSSPIDCol='',
+		   @cSpId=@nSpId 	
+
+	set @CINSSPID=LEFT(@nSpId,38)+LEFT(@cMemoId,2)
+
+	SELECT @cUploadTableName='wps_wps_mst_'+@cSuffix
+
+	EXEC UPDATEMASTERXN_MIRROR @CSOURCEDB='',@CSOURCETABLE='wps_mst',@CDESTDB=''
+								,@CDESTTABLE=@cUploadTableName,@CKEYFIELD1='ps_id',@CKEYFIELD2='',@CKEYFIELD3=''
+								,@LINSERTONLY=1,@CFILTERCONDITION=@CFILTERCONDITION,@LUPDATEONLY=0
+								,@BALWAYSUPDATE=0,@BUPDATEXNS=1,@CINSSPID=@CINSSPID,@CINSSPIDCol=@CINSSPIDCol
+								,@CSEARCHTABLE='wps_mst'
+	
+	PRINT 'gen tempdata for 2'
+	EXEC SP3S_GENFILTERED_UPDATESTR
+	@cSpId=@cMemoId ,
+	@cInsSpId=@cInsSpId,
+	@cTableName='wps_mst',
+	@cUploadTableName=@cUploadTableName,
+	@cKeyfield='ps_id',
+	@cSpIdCol=@cSpIdCol
+
+END

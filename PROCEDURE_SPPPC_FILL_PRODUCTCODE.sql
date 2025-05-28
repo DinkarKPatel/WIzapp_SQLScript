@@ -1,0 +1,61 @@
+CREATE PROCEDURE [DBO].[SPPPC_FILL_PRODUCTCODE]      
+(      
+ @NQUERYID   INT,        
+ @VPARAMETER  VARCHAR(500)      
+)      
+AS          
+BEGIN       
+      
+ DECLARE @CSTEP INT, @CCMD NVARCHAR(MAX), @ERRMSG_OUT VARCHAR(MAX)      
+ BEGIN TRY      
+  SET NOCOUNT ON;      
+        
+  SET @ERRMSG_OUT = ''      
+        
+  IF @NQUERYID = 1      
+   -- GET FG PRODUCT CODE LIST      
+   GOTO LBLGETFGPRODUCTCODELIST      
+   ELSE IF @NQUERYID = 2      
+   -- GET RM PRODUCT CODE LIST       
+   GOTO LBLGETRMPRODUCTCODELIST     
+  ELSE      
+   GOTO LAST      
+      
+-- GET FG PRODUCT CODE LIST      
+LBLGETFGPRODUCTCODELIST:      
+  SET @CSTEP = 101      
+  SELECT TOP 10 A.PRODUCT_CODE   
+  FROM PPC_FG_SKU A (NOLOCK)       
+  WHERE   ISNULL(A.PRODUCT_CODE,'')<>''    
+  AND A.PRODUCT_CODE LIKE '%'+ @VPARAMETER +'%'         
+  ORDER BY A.PRODUCT_CODE      
+        
+  GOTO LAST     
+    
+    
+  -- GET RM PRODUCT CODE LIST      
+LBLGETRMPRODUCTCODELIST:      
+  SET @CSTEP = 101      
+  SELECT TOP 10 A.PRODUCT_CODE   
+  FROM PPC_SKU A (NOLOCK)       
+  WHERE   ISNULL(A.PRODUCT_CODE,'')<>''    
+  AND A.PRODUCT_CODE LIKE '%'+ @VPARAMETER +'%'       
+  ORDER BY A.PRODUCT_CODE      
+        
+  GOTO LAST      
+      
+        
+LAST:         
+ GOTO END_PROC      
+      
+  SET NOCOUNT OFF;      
+ END TRY        
+ BEGIN CATCH        
+  SET @ERRMSG_OUT='ERROR: [P]: SPPPC_FILL_PRODUCTCODE, [STEP]: '+CAST(@CSTEP AS VARCHAR(5))+', [MESSAGE]: ' + ERROR_MESSAGE()      
+  GOTO END_PROC        
+ END CATCH         
+      
+END_PROC:        
+ IF  ISNULL(@ERRMSG_OUT,'')<>''       
+  SELECT @ERRMSG_OUT AS ERRORMSG      
+END

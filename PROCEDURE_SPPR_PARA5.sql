@@ -1,0 +1,58 @@
+CREATE PROCEDURE [DBO].[SPPR_PARA5]     
+(    
+ @NMODE    INT, --(1) - VIEW FILTER DATA (2) - VIEW PARA5_CODE WISE    
+ @PARA5_CODE   VARCHAR(9)='',    
+ @PARA5_NAME   VARCHAR(300)='',    
+ @PARA5_SET   VARCHAR(40)='',    
+ @INACTIVE   VARCHAR(1)='',    
+ @ERRMSG_OUT   VARCHAR(MAX) OUT    
+)    
+AS    
+BEGIN    
+ DECLARE @CSTEP INT, @CCMD NVARCHAR(MAX)    
+     
+ BEGIN TRY    
+  SET @ERRMSG_OUT = ''    
+      
+  SET @CSTEP = 10    
+  IF (@NMODE=1)    
+  BEGIN    
+   SET @CCMD=N'SELECT PARA5_CODE, PARA5_NAME, ALIAS, REMARKS,     
+      CASE WHEN ISNULL(INACTIVE, 0) = 0 THEN ''NO'' ELSE ''YES'' END AS INACTIVE FROM [PARA5]    
+      WHERE PARA5_NAME LIKE ''%' + @PARA5_NAME + '%'' '    
+   IF @INACTIVE = 'Y'    
+   BEGIN    
+    SET @CCMD+=N' AND ISNULL(INACTIVE, 0)= 1 '    
+   END    
+   IF @INACTIVE = 'N'    
+   BEGIN    
+    SET @CCMD+=N' AND ISNULL(INACTIVE, 0)= 0 '    
+   END    
+   SET @CCMD+=N' ORDER BY PARA5_CODE DESC'     
+      
+   PRINT @CCMD    
+   EXEC SP_EXECUTESQL @CCMD    
+  END    
+      
+  SET @CSTEP = 20    
+  IF (@NMODE=2)    
+  BEGIN    
+   SET @CCMD=N'SELECT PARA5_CODE, PARA5_NAME, ALIAS, REMARKS,     
+      CASE WHEN ISNULL(INACTIVE, 0) = 0 THEN ''NO'' ELSE ''YES'' END AS INACTIVE FROM [PARA5]    
+      WHERE PARA5_CODE = ''' + @PARA5_CODE + ''' '    
+   PRINT @CCMD    
+   EXEC SP_EXECUTESQL @CCMD    
+  END    
+      
+ END TRY      
+ BEGIN CATCH      
+  SET @ERRMSG_OUT='ERROR: [P]: SPPR_PARA5, [STEP]: '+CAST(@CSTEP AS VARCHAR(5))+', [MESSAGE]: ' + ERROR_MESSAGE()    
+  PRINT @ERRMSG_OUT    
+      
+  GOTO END_PROC      
+ END CATCH       
+    
+END_PROC:      
+ IF  ISNULL(@ERRMSG_OUT,'')=''     
+  SET @ERRMSG_OUT = ''    
+END

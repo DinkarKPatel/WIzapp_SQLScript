@@ -1,0 +1,36 @@
+CREATE PROCEDURE VALIDATEXN_EOSSSOR_BEFORE_EDIT   
+@CMEMOID VARCHAR(30),  
+@BCANCELXN BIT,  
+@CERRORMSG VARCHAR(200) OUTPUT,  
+@CEXPRERRORMSG VARCHAR(200) OUTPUT  
+--WITH ENCRYPTION
+AS  
+BEGIN  
+   
+ DECLARE @CTEXT VARCHAR(10),@CPRODUCTCODE VARCHAR(50) ,@CVALUE VARCHAR(5) 
+   
+ SELECT @CPRODUCTCODE=''  
+ 
+   SELECT @CVALUE = VALUE  FROM CONFIG  WHERE CONFIG_OPTION ='NEW_ACCOUNT_SYSTEM'
+    
+   SET @CTEXT=(CASE WHEN @BCANCELXN=1 THEN 'CANCEL' ELSE 'EDIT' END)  
+   
+   	IF EXISTS (SELECT TOP 1 memo_id from eosssorm (nolocK) where memo_id=@cMemoId AND APPROVEDLEVELNO=99)
+	BEGIN	
+		SET @CERRORMSG='This memo has been approved.........CAN NOT '+@CTEXT
+		RETURN
+	END 
+
+	IF EXISTS (SELECT TOP 1 CN_ID from cnm01106 (nolocK) where refmemoid='SOR'+@cMemoId AND cancelled=0)
+	BEGIN	
+		SET @CERRORMSG='Credit Note has been generated against this Memo.........CAN NOT '+@CTEXT
+		RETURN
+	END 
+
+	IF EXISTS (SELECT TOP 1 RM_ID from rmm01106 (nolocK) where refmemoid='SOR'+@cMemoId AND cancelled=0)
+	BEGIN	
+		SET @CERRORMSG='Debit note has been generated against this Memo.........CAN NOT '+@CTEXT
+		RETURN
+	END 
+
+END

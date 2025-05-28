@@ -1,0 +1,658 @@
+create PROCEDURE SP3S_VALIDATE_GST_PERCENTAGE
+(
+ @CXNTYPE VARCHAR(10)='',
+ @CXNID VARCHAR(40)='',
+ @CCURDEPT_ID varchar(5)='',
+ @CERRORMSG VARCHAR(MAX)='' OUTPUT
+)
+AS
+BEGIN
+      
+	 
+	 
+	 DECLARE @CCURSTATE_CODE VARCHAR(2),@CLOC_GSTN_NO VARCHAR(100),@BREGISTERED_DELEER NUMERIC(5,0),@BCESS_APPLICABLE BIT,
+	         @CALL_XN_IGST VARCHAR(5), @CFC_CODE VARCHAR(7),@CPICKLASTTAX VARCHAR(10),@CALCULATE_GST_FOR_SLR VARCHAR(5),
+	         @gst_dept_id_filter varchar(5),@DTSQL nvarchar(max),@CSTATECODE VARCHAR(10),@nExportGstMode NUMERIC(1,0),
+			 @nExportGstPct NUMERIC(6,2),@bExportInvoice BIT,@NDN_TYPE int,@CREFMRRID varchar(50),@cStep VARCHAR(20),
+			 @GST_CAL_DELIVERY_CHALLAN VARCHAR(10),@CPARTY_GSTN_NO VARCHAR(50),@BPARTYREGISTERED INT,@nDOMESTIC_FOR_EXPORT int,@ninv_mode int,
+			 @CAC_CODE VARCHAR(15),@CRETAINEXCELNRV VARCHAR(2),@bSisLoc BIT,@cSordept_id varchar(5)
+
+	
+	SET @cStep='85.41'
+	EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1
+    DECLARE @CPRODUCT_CODE VARCHAR(100),@NSTOREDGST_PERCENTAGE NUMERIC(10,2),@NCLAGSTPERCENTAGE NUMERIC(10,2)
+
+
+	
+	SELECT TOP 1 @CPICKLASTTAX=LTRIM(RTRIM(VALUE)) FROM CONFIG (NOLOCK) WHERE  CONFIG_OPTION='PICK_LAST_SLS_TAX'
+ 
+
+	SELECT TOP 1 @GST_CAL_DELIVERY_CHALLAN=VALUE FROM CONFIG (NOLOCK) WHERE CONFIG_OPTION='GST_CAL_DELIVERY_CHALLAN_PRINT' 
+
+     SELECT TOP 1 @CCURSTATE_CODE=ISNULL(GST_STATE_CODE,''),@CLOC_GSTN_NO=A.LOC_GST_NO,@BREGISTERED_DELEER=ISNULL(REGISTERED_GST,0) ,
+	            @BCESS_APPLICABLE=ISNULL(CESS_APPLICABLE,0),@bSisLoc=ISNULL(sis_loc,0)
+	 FROM LOCATION A (NOLOCK) WHERE A.DEPT_ID =@CCURDEPT_ID
+    
+	SET @CRETAINEXCELNRV=''
+	IF @bSisLoc=1
+	BEGIN
+		SELECT TOP 1 @CRETAINEXCELNRV=VALUE FROM CONFIG (NOLOCK)
+		WHERE CONFIG_OPTION='RETAIN_EXCEL_NRV_SISLOC_SALEIMP'
+	END
+
+	SET @cStep='85.41'
+	EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1	 
+
+	  SELECT @CFC_CODE=fc_code  FROM location (NOLOCK) WHERE DEPT_ID=@CCURDEPT_ID
+      SELECT TOP 1 @CALL_XN_IGST=VALUE  FROM CONFIG (NOLOCK) WHERE CONFIG_OPTION ='ALL_XN_IGST' 
+
+	SET @cStep='85.412'
+	EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1	       
+	  SELECT @CSTATECODE=STATE_CODE FROM LOC_VIEW (NOLOCK) WHERE DEPT_ID=@CCURDEPT_ID
+
+
+      IF @CALL_XN_IGST IS NULL
+	     SET @CALL_XN_IGST=''
+       
+      IF ISNULL(@CFC_CODE,'') NOT IN('','0000000')
+         SET @CALL_XN_IGST='1'
+      
+	  	SET @cStep='85.43'
+	EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1
+	   IF ISNULL(@CFC_CODE,'')IN('','0000000')
+		   SET @GST_DEPT_ID_FILTER=''
+	   ELSE
+	       SET @GST_DEPT_ID_FILTER=@CCURDEPT_ID
+
+	  
+                  
+      
+	            SELECT B.HSN_CODE,ISNULL(C.TAX_PERCENTAGE,0) AS TAX_PERCENTAGE,ISNULL(C.RATE_CUTOFF,0) AS RATE_CUTOFF,
+					       ISNULL(C.RATE_CUTOFF_TAX_PERCENTAGE,0) AS RATE_CUTOFF_TAX_PERCENTAGE,
+					      ISNULL(C.WEF,'') AS WEF,
+						  SR=ROW_NUMBER() OVER (PARTITION BY B.ROW_ID ORDER BY C.WEF DESC),
+						  ISNULL(C.GST_CAL_BASIS,1) AS GST_CAL_BASIS,
+						  B.GST_PERCENTAGE AS GST_PERCENTAGE,
+						  CASE WHEN  ISNULL(C.GST_CAL_BASIS,1)=1 THEN  NET-CMM_DISCOUNT_AMOUNT ELSE B.MRP END AS NET,
+						  B.QUANTITY,
+						  NET_VALUE_WOTAX=CAST(0 AS NUMERIC(10,2)),
+						  CAST(0 AS INT) AS CESS_PERCENTAGE,
+						  TAX_METHOD=CASE WHEN TAX_METHOD =1 THEN 2 ELSE 1 END,
+						  A.CM_DT ,
+						  A.PARTY_STATE_CODE,
+						  ISNULL(CUS.cus_gst_no,'') AS PARTY_GST_NO,
+						  CAL_GST_PERCENTAGE =CAST(0 AS NUMERIC(10,2)),
+						  B.NET- B.CMM_DISCOUNT_AMOUNT AS NET_VALUE,
+						  B.REF_SLS_MEMO_NO,
+						  B.REF_SLS_MEMO_DT,
+						  B. PRODUCT_CODE,
+						  b.row_id ,
+						  XN_VALUE_WITHOUT_GST ,
+						  ISNULL(B.IGST_AMOUNT,0)+ISNULL(B.CGST_AMOUNT,0)+ISNULL(B.SGST_AMOUNT,0) AS GST_AMOUNT,
+						  XN_VALUE_WITH_GST ,
+						   B.CESS_AMOUNT,
+						   B.GST_CESS_PERCENTAGE,
+						   B.GST_CESS_AMOUNT
+				    into #TMPGST
+					FROM CMM01106 A (NOLOCK)
+					JOIN CMD01106 B (NOLOCK) ON A.CM_ID =B.CM_ID 
+					JOIN CUSTDYM CUS (NOLOCK) ON A.CUSTOMER_CODE=CUS.customer_code 
+					LEFT JOIN HSN_DET C (NOLOCK) ON B.HSN_CODE =C.HSN_CODE AND C.WEF  <=CM_DT 
+					WHERE 1=2
+
+	
+	     
+			SET @cStep='85.44'
+	         EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1	  
+				 IF @CXNTYPE='SLS'
+				 BEGIN
+
+				     if @CRETAINEXCELNRV='1'
+					 begin
+
+					   ;WITH CTE AS
+						(
+						SELECT B.HSN_CODE,ISNULL(C.TAX_PERCENTAGE,0) AS TAX_PERCENTAGE,ISNULL(C.RATE_CUTOFF,0) AS RATE_CUTOFF,
+							   ISNULL(C.RATE_CUTOFF_TAX_PERCENTAGE,0) AS RATE_CUTOFF_TAX_PERCENTAGE,
+							  ISNULL(C.WEF,'') AS WEF,
+							  SR=ROW_NUMBER() OVER (PARTITION BY B.ROW_ID ORDER BY C.WEF DESC),
+							  ISNULL(C.GST_CAL_BASIS,1) AS GST_CAL_BASIS,
+							  sisloc_gst_percentage AS GST_PERCENTAGE,
+							  CASE WHEN  ISNULL(C.GST_CAL_BASIS,1)=1 THEN  (B.SIS_NET-ISNULL(B.CMM_DISCOUNT_AMOUNT,0))  ELSE  ( B.sisloc_MRP*B.QUANTITY) END AS NET,
+							  B.QUANTITY,
+							  NET_VALUE_WOTAX=CAST(0 AS NUMERIC(10,2)),
+							  CAST(0 AS INT) AS CESS_PERCENTAGE,
+							  TAX_METHOD=CASE WHEN TAX_METHOD =1 THEN 2 ELSE 1 END,
+							  A.CM_DT ,
+							  A.PARTY_STATE_CODE,
+							  ISNULL(CUS.CUS_GST_NO,'') AS PARTY_GST_NO,
+							  CAL_GST_PERCENTAGE =CAST(0 AS NUMERIC(10,2)),
+							  (B.sis_NET-ISNULL(B.CMM_DISCOUNT_AMOUNT,0)) AS NET_VALUE,
+							  B.REF_SLS_MEMO_NO,
+							  B.REF_SLS_MEMO_DT,
+							  B. PRODUCT_CODE,
+							  b.row_id ,
+							 (sisloc_taxable_value) XN_VALUE_WITHOUT_GST ,
+						     (ISNULL(B.sisloc_igst_amount,0)+ISNULL(B.sisloc_lgst_amount,0)) AS GST_AMOUNT,
+						     (ISNULL(b.sisloc_taxable_value,0)+ISNULL(B.sisloc_igst_amount,0)+ISNULL(B.sisloc_lgst_amount,0)) XN_VALUE_WITH_GST ,
+							 B.CESS_AMOUNT,
+							 B.GST_CESS_PERCENTAGE,
+						     B.GST_CESS_AMOUNT
+						FROM SLS_CMM01106_UPLOAD A (NOLOCK)
+						JOIN SLS_cmd01106_UPLOAD B (NOLOCK) ON A.SP_ID =B.SP_ID 
+						JOIN CUSTDYM CUS (NOLOCK) ON A.CUSTOMER_CODE=CUS.CUSTOMER_CODE 
+						LEFT JOIN HSN_DET C (NOLOCK) ON B.HSN_CODE =C.HSN_CODE AND C.WEF  <=CM_DT AND ISNULL(C.DEPT_ID,'')=@GST_DEPT_ID_FILTER
+						WHERE A.sp_ID =@CXNID
+						)
+
+					 	INSERT INTO #TMPGST
+						SELECT *  FROM CTE WHERE SR=1
+					 end
+					 else
+					 begin
+
+						;WITH CTE AS
+						(
+						SELECT B.HSN_CODE,ISNULL(C.TAX_PERCENTAGE,0) AS TAX_PERCENTAGE,ISNULL(C.RATE_CUTOFF,0) AS RATE_CUTOFF,
+							   ISNULL(C.RATE_CUTOFF_TAX_PERCENTAGE,0) AS RATE_CUTOFF_TAX_PERCENTAGE,
+							  ISNULL(C.WEF,'') AS WEF,
+							  SR=ROW_NUMBER() OVER (PARTITION BY B.ROW_ID ORDER BY C.WEF DESC),
+							  ISNULL(C.GST_CAL_BASIS,1) AS GST_CAL_BASIS,
+							   B.GST_PERCENTAGE  AS GST_PERCENTAGE,
+							  CASE WHEN  ISNULL(C.GST_CAL_BASIS,1)=1 THEN  (B.NET-ISNULL(B.CMM_DISCOUNT_AMOUNT,0))  ELSE  ( B.MRP*B.QUANTITY) END AS NET,
+							  B.QUANTITY,
+							  NET_VALUE_WOTAX=CAST(0 AS NUMERIC(10,2)),
+							  CAST(0 AS INT) AS CESS_PERCENTAGE,
+							  TAX_METHOD=CASE WHEN TAX_METHOD =1 THEN 2 ELSE 1 END,
+							  A.CM_DT ,
+							  A.PARTY_STATE_CODE,
+							  ISNULL(CUS.CUS_GST_NO,'') AS PARTY_GST_NO,
+							  CAL_GST_PERCENTAGE =CAST(0 AS NUMERIC(10,2)),
+							  (B.NET-ISNULL(B.CMM_DISCOUNT_AMOUNT,0)) AS NET_VALUE,
+							  B.REF_SLS_MEMO_NO,
+							  B.REF_SLS_MEMO_DT,
+							  B. PRODUCT_CODE,
+							  b.row_id ,
+							   XN_VALUE_WITHOUT_GST XN_VALUE_WITHOUT_GST ,
+						     (ISNULL(B.IGST_AMOUNT,0)+ISNULL(B.CGST_AMOUNT,0)+ISNULL(B.SGST_AMOUNT,0)) AS GST_AMOUNT,
+						     XN_VALUE_WITH_GST,
+							 B.CESS_AMOUNT,
+							 B.GST_CESS_PERCENTAGE,
+						     B.GST_CESS_AMOUNT
+						FROM SLS_CMM01106_UPLOAD A (NOLOCK)
+						JOIN SLS_cmd01106_UPLOAD B (NOLOCK) ON A.SP_ID =B.SP_ID 
+						JOIN CUSTDYM CUS (NOLOCK) ON A.CUSTOMER_CODE=CUS.CUSTOMER_CODE 
+						LEFT JOIN HSN_DET C (NOLOCK) ON B.HSN_CODE =C.HSN_CODE AND C.WEF  <=CM_DT AND ISNULL(C.DEPT_ID,'')=@GST_DEPT_ID_FILTER
+						WHERE A.sp_ID =@CXNID
+						)
+						INSERT INTO #TMPGST
+						SELECT *  FROM CTE WHERE SR=1
+						end
+						
+					
+
+
+					  SET @cStep='85.46'
+					  EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1
+				
+        --            if @CXNID='5179c8e819e-78ba-4e5b-9d90-8d6149eb32c4'
+				    --select hsn_code, TAX_PERCENTAGE,RATE_CUTOFF_TAX_PERCENTAGE, * from #TMPGST
+					
+						SELECT TOP 1 @CPARTY_GSTN_NO=PARTY_GST_NO FROM #TMPGST
+
+
+						SELECT TOP 1 @nExportGstPct=ISNULL(b.custdym_export_gst_percentage,0),
+                             @bExportInvoice=ISNULL(b.custdym_export_gst_percentage_Applicable,0)
+					  FROM SLS_CMM01106_UPLOAD A (NOLOCK)
+					  JOIN custdym B (NOLOCK) ON A.CUSTOMER_CODE =B.CUSTOMER_CODE
+					  WHERE A.sp_ID =@CXNID
+
+					  set @bExportInvoice=isnull(@bExportInvoice,0)
+					  set @nExportGstPct=isnull(@nExportGstPct,0)
+
+				 
+
+
+                 end
+				 ELSE IF @CXNTYPE ='WSL'
+	             BEGIN
+
+					 
+					  SELECT TOP 1 @nExportGstMode=ISNULL(export_gst_mode,0),
+								   @nExportGstPct=ISNULL(export_gst_percentage,0),
+								   @bExportInvoice=ISNULL(export_gst_percentage_Applicable,0),
+								   @nDOMESTIC_FOR_EXPORT=DOMESTIC_FOR_EXPORT,
+								   @ninv_mode =a.inv_mode   ,@cSordept_id=a.party_dept_id 
+					  FROM INM01106 A (NOLOCK)  
+					  JOIN LMP01106 B (NOLOCK)  ON A.AC_CODE=B.AC_CODE
+					  WHERE a.inv_id=@CXNID
+	             	          
+
+					;WITH CTE AS
+					(
+					SELECT B.HSN_CODE,ISNULL(C.TAX_PERCENTAGE,0) AS TAX_PERCENTAGE,ISNULL(C.RATE_CUTOFF,0) AS RATE_CUTOFF,
+					       ISNULL(C.RATE_CUTOFF_TAX_PERCENTAGE,0) AS RATE_CUTOFF_TAX_PERCENTAGE,
+					      ISNULL(C.WEF,'') AS WEF,
+						  SR=ROW_NUMBER() OVER (PARTITION BY B.ROW_ID ORDER BY C.WEF DESC),
+						  ISNULL(C.GST_CAL_BASIS,1) AS GST_CAL_BASIS,
+						  B.GST_PERCENTAGE AS GST_PERCENTAGE,
+						  CASE WHEN  ISNULL(C.GST_CAL_BASIS,1)=1 THEN  ROUND(((B.net_rate*B.invoice_quantity)-(ISNULL(B.INMDISCOUNTAMOUNT,0) )),2) ELSE  ( B.MRP*B.INVOICE_QUANTITY) END AS NET,
+						  B.QUANTITY,
+						  NET_VALUE_WOTAX=CAST(0 AS NUMERIC(10,2)),
+						  CAST(0 AS INT) AS CESS_PERCENTAGE,
+						  TAX_METHOD=bill_level_tax_method ,
+						  A.INV_DT ,
+						  A.PARTY_STATE_CODE,
+						  ISNULL(CASE WHEN A.INV_MODE =1 then  ISNULL(LMP.AC_GST_NO ,'') ELSE L.LOC_GST_NO END,'') AS PARTY_GST_NO,
+						  CAL_GST_PERCENTAGE =CAST(0 AS NUMERIC(10,2)),
+						   ROUND(((B.net_rate*B.invoice_quantity)-(ISNULL(B.INMDISCOUNTAMOUNT,0) )),2)  AS NET_VALUE,
+						  '' as REF_SLS_MEMO_NO,
+						  '' as REF_SLS_MEMO_DT,
+						  B. PRODUCT_CODE,
+						  b.row_id ,
+						  XN_VALUE_WITHOUT_GST ,
+						  ISNULL(B.IGST_AMOUNT,0)+ISNULL(B.CGST_AMOUNT,0)+ISNULL(B.SGST_AMOUNT,0) AS GST_AMOUNT,
+						  XN_VALUE_WITH_GST ,
+						   B.CESS_AMOUNT,
+						   B.GST_CESS_PERCENTAGE,
+						   B.GST_CESS_AMOUNT
+					FROM INM01106 A (NOLOCK)
+					JOIN IND01106 B (NOLOCK) ON A.inv_id  =B.inv_id 
+					JOIN LMp01106 lmp (NOLOCK) ON A.ac_code =lmp.ac_code
+					left join location l (NOLOCK)  on l.dept_id =a.party_dept_id 
+					LEFT JOIN HSN_DET C (NOLOCK) ON B.HSN_CODE =C.HSN_CODE AND C.WEF  <=inv_dt AND ISNULL(C.DEPT_ID,'')=@GST_DEPT_ID_FILTER
+					WHERE A.INV_ID =@CXNID
+					)
+					
+					insert into #TMPGST
+					SELECT *  FROM CTE WHERE SR=1
+					
+					SELECT TOP 1 @CPARTY_GSTN_NO=PARTY_GST_NO FROM #TMPGST
+
+
+
+	            END
+				ELSE IF @CXNTYPE ='PRT'
+	            BEGIN
+
+	      
+					;WITH CTE AS
+					(
+					SELECT B.HSN_CODE,ISNULL(C.TAX_PERCENTAGE,0) AS TAX_PERCENTAGE,ISNULL(C.RATE_CUTOFF,0) AS RATE_CUTOFF,
+					       ISNULL(C.RATE_CUTOFF_TAX_PERCENTAGE,0) AS RATE_CUTOFF_TAX_PERCENTAGE,
+					      ISNULL(C.WEF,'') AS WEF,
+						  SR=ROW_NUMBER() OVER (PARTITION BY B.ROW_ID ORDER BY C.WEF DESC),
+						  ISNULL(C.GST_CAL_BASIS,1) AS GST_CAL_BASIS,
+						  B.GST_PERCENTAGE AS GST_PERCENTAGE,
+						  CASE WHEN  ISNULL(C.GST_CAL_BASIS,1)=1 THEN  ROUND(((B.PURCHASE_PRICE*B.INVOICE_QUANTITY) -ISNULL(B.RMMDISCOUNTAMOUNT,0)),2) ELSE ( SKU.MRP*B.INVOICE_QUANTITY) END AS NET,
+						  B.QUANTITY,
+						  NET_VALUE_WOTAX=CAST(0 AS NUMERIC(10,2)),
+						  CAST(0 AS INT) AS CESS_PERCENTAGE,
+						  TAX_METHOD=bill_level_tax_method ,
+						  a.RM_DT AS RM_DT ,
+						  A.PARTY_STATE_CODE,
+						  CASE WHEN MODE=1 THEN LMP.registered_gst_dealer  else l.registered_gst  end AS PARTY_GST_NO,
+						  CAL_GST_PERCENTAGE =CAST(0 AS NUMERIC(10,2)),
+						  ROUND(((B.PURCHASE_PRICE*B.INVOICE_QUANTITY) -ISNULL(B.RMMDISCOUNTAMOUNT,0)),2)  AS NET_VALUE,
+						  b.bill_no as REF_SLS_MEMO_NO,
+						  B.BILL_DT  as REF_SLS_MEMO_DT,
+						  B. PRODUCT_CODE,
+						  B.ROW_ID ,
+						  XN_VALUE_WITHOUT_GST ,
+						  ISNULL(B.IGST_AMOUNT,0)+ISNULL(B.CGST_AMOUNT,0)+ISNULL(B.SGST_AMOUNT,0)+ISNULL(B.CESS_AMOUNT ,0) AS GST_AMOUNT,
+						  XN_VALUE_WITH_GST ,
+						   B.CESS_AMOUNT,
+						   B.GST_CESS_PERCENTAGE,
+						   B.GST_CESS_AMOUNT
+					FROM rmm01106 A (NOLOCK)
+					JOIN rmd01106 B (NOLOCK) ON A.RM_ID  =B.RM_ID 
+					JOIN LMp01106 lmp (NOLOCK) ON A.ac_code =lmp.ac_code 
+					JOIN SKU (NOLOCK) ON SKU.PRODUCT_CODE =B.product_code
+					LEFT JOIN LOCATION L ON A.PARTY_DEPT_ID=L.DEPT_ID
+					LEFT JOIN HSN_DET C (NOLOCK) ON B.HSN_CODE =C.HSN_CODE 
+					AND C.WEF  <= a.RM_DT
+					AND ISNULL(C.DEPT_ID,'')=@GST_DEPT_ID_FILTER
+					WHERE A.rm_id =@CXNID
+					)
+				
+					insert into #TMPGST
+					SELECT *  FROM CTE WHERE SR=1
+
+				                  
+
+					select @NDN_TYPE=A.dn_type,
+					       @CREFMRRID =ISNULL(A.REFMEMOID,''),
+						   @CPARTY_GSTN_NO=CASE WHEN MODE=1 THEN LMP.Ac_gst_no else l.loc_gst_no end,
+						   @BPARTYREGISTERED=CASE WHEN MODE=1 THEN LMP.registered_gst_dealer  else l.registered_gst  end,
+						   @ninv_mode =a.mode  ,
+						   @CAC_CODE=a.ac_code,
+						   @nExportGstMode=ISNULL(export_gst_mode,0),
+					       @nExportGstPct=ISNULL(export_gst_percentage,0),
+						   @bExportInvoice=ISNULL(export_gst_percentage_Applicable,0)
+					from rmm01106 A (nolock)
+					LEFT JOIN LOCATION L (NOLOCK) ON A.party_dept_id=L.DEPT_ID 
+					LEFT JOIN LMP01106 LMP (NOLOCK) ON LMP.AC_CODE =A.AC_CODE 
+					where rm_id=@CXNID
+					
+					set @cSordept_id=@CCURDEPT_ID 
+
+
+					--@CPARTY_GSTN_NO VARCHAR(50),@BPARTYREGISTERED
+	            
+
+	            END
+	            
+	           SET @cStep='85.48'
+	          EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1
+                
+
+				SET @NDN_TYPE=ISNULL(@NDN_TYPE,0)
+				SET @CREFMRRID=ISNULL(@CREFMRRID,'')
+				set @bExportInvoice=isnull(@bExportInvoice,0)
+				set @BPARTYREGISTERED=isnull(@BPARTYREGISTERED,0)
+
+				 IF ISNULL(@CALL_XN_IGST,'')='1'
+	             SET @CPARTY_GSTN_NO='NA1'
+
+				 IF @CXNTYPE='PRT' AND ISNULL(@BPARTYREGISTERED,0) IN(0,2)
+				   GOTO LBLCALCULATE
+
+				
+
+        lblcalculate:
+				--now calculate gst percentage
+
+             	SET @cStep='85.50'
+	            EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1
+
+				 IF ISNULL(@BCESS_APPLICABLE,0)=1
+				 BEGIN
+				     
+					   UPDATE A  SET CESS_PERCENTAGE= B.CESS_PERCENTAGE
+					   FROM #TMPGST  A 
+					   JOIN GST_STATE_DET B (NOLOCK) ON B.GST_STATE_CODE=@CCURSTATE_CODE AND A.CM_DT  BETWEEN B.FM_DT AND B.TO_DT
+					   AND @CCURSTATE_CODE=A.PARTY_STATE_CODE 
+
+				 END
+
+             	SET @cStep='85.52'
+	            EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1
+				 
+                UPDATE TMP SET	NET_VALUE_WOTAX= ROUND(NET-(NET*(CASE WHEN TAX_METHOD=2 THEN ( (TMP.RATE_CUTOFF_TAX_PERCENTAGE+ISNULL(TMP.CESS_PERCENTAGE,0)+ISNULL(TMP.GST_CESS_PERCENTAGE,0))/  
+													 (100 + TMP.RATE_CUTOFF_TAX_PERCENTAGE+ISNULL(TMP.CESS_PERCENTAGE,0)+ISNULL(TMP.GST_CESS_PERCENTAGE,0))) ELSE 0 END)),2)
+				FROM #TMPGST TMP 
+				
+				
+				 UPDATE TMP SET NET_VALUE_WOTAX =TMP.NET_VALUE_WOTAX / ARTICLE_PACK_SIZE FROM #TMPGST TMP (NOLOCK)
+				 JOIN SKU B (NOLOCK) ON TMP.PRODUCT_CODE =B.PRODUCT_CODE 
+				 JOIN ARTICLE C (NOLOCK) ON C.ARTICLE_CODE =B.ARTICLE_CODE 
+                 WHERE ISNULL(ARTICLE_PACK_SIZE,0)>0
+				  
+				
+				Declare @CDONOT_CALCULATE_GST_SOR_LOC varchar(5) 	
+				
+				if @ninv_mode=2 and @CXNTYPE in('WSL','PRT')
+				begin
+				
+					IF EXISTS (SELECT TOP 1 'U' FROM LOCATION (NOLOCK) WHERE DEPT_ID=@cSordept_id AND SOR_LOC =1)
+					SELECT TOP 1 @CDONOT_CALCULATE_GST_SOR_LOC=VALUE FROM CONFIG WHERE CONFIG_OPTION ='DONOT_CALCULATE_GST_FOR_SOR_LOCATION'
+					
+				end
+				 
+				
+				
+
+             	SET @cStep='85.54'
+	            EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1
+
+				 IF ISNULL(@CPARTY_GSTN_NO,'')=ISNULL(@CLOC_GSTN_NO,'')  and @CXNTYPE ='WSL' AND ISNULL(@GST_CAL_DELIVERY_CHALLAN,'')<>'1' AND @bExportInvoice<>1 or (isnull(@nDOMESTIC_FOR_EXPORT,0)=3)
+                  BEGIN 
+                         UPDATE TMP SET cal_GST_PERCENTAGE=0,NET_VALUE_WOTAX=NET_VALUE      
+                         FROM #TMPGST TMP
+                     
+                END 
+                ELSE 
+				IF ISNULL(@CDONOT_CALCULATE_GST_SOR_LOC,'')='1' AND @CXNTYPE IN('PRT','WSL')
+				BEGIN
+				         UPDATE TMP SET cal_GST_PERCENTAGE=0,NET_VALUE_WOTAX=NET_VALUE      
+                         FROM #TMPGST TMP
+				
+				END
+				else 
+				 IF ISNULL(@BREGISTERED_DELEER,0) IN(0,2) AND @CXNTYPE IN('WSL','SLS','PRT')
+				 begin
+
+				
+				         UPDATE TMP
+                         SET cal_GST_PERCENTAGE=0,
+                         NET_VALUE_WOTAX=NET_VALUE      
+                         FROM #TMPGST TMP
+
+				 end
+				 ELSE 
+				 IF ISNULL(@CPARTY_GSTN_NO,'')=ISNULL(@CLOC_GSTN_NO,'')  and @CXNTYPE <>'WSL'
+				 BEGIN
+				     UPDATE TMP
+                     SET cal_GST_PERCENTAGE=0,
+                     NET_VALUE_WOTAX=NET_VALUE      
+                     FROM #TMPGST TMP
+
+				 END
+                 ELSE   
+                 IF @CXNTYPE IN('PRT') AND isnull(@BPARTYREGISTERED,0) IN(0,2)
+                 BEGIN
+                         UPDATE TMP
+                         SET cal_GST_PERCENTAGE=0,
+                         NET_VALUE_WOTAX=NET_VALUE      
+                         FROM #TMPGST TMP 
+                END
+				else 
+				IF ISNULL(@BEXPORTINVOICE,0)=1 AND @CXNTYPE in('WSL','sls','PRT')
+				BEGIN
+				    
+				   UPDATE TMP SET CAL_GST_PERCENTAGE=(CASE WHEN isnull(@bExportInvoice,0)=1 THEN ISNULL(@nExportGstPct,0)
+				   WHEN ABS(TMP.QUANTITY)=0 THEN 0
+                   ELSE ISNULL(CASE WHEN tmp.RATE_CUTOFF<ABS(TMP.NET_VALUE_WOTAX)/ABS(TMP.QUANTITY) 
+                   THEN tmp.TAX_PERCENTAGE ELSE RATE_CUTOFF_TAX_PERCENTAGE END ,0) END)
+				   FROM #TMPGST TMP 
+
+
+				END
+				ELSE
+				BEGIN
+
+				             	SET @cStep='85.56'
+             	EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1
+					
+					--if @@spid=90
+					--	select 'update #TMPGST step-1',CAL_GST_PERCENTAGE,GST_PERCENTAGE,product_code,* from #TMPGST
+
+					UPDATE TMP SET CAL_GST_PERCENTAGE=(CASE WHEN ABS(TMP.QUANTITY)=0 THEN 0
+					ELSE ISNULL(CASE WHEN TMP.RATE_CUTOFF<ABS(TMP.NET_VALUE_WOTAX)/ABS(TMP.QUANTITY) 
+					THEN TMP.TAX_PERCENTAGE ELSE RATE_CUTOFF_TAX_PERCENTAGE END ,0) END)
+					FROM #TMPGST TMP 
+
+					--if @@spid=90
+					--	select 'update #TMPGST step-2',CAL_GST_PERCENTAGE,GST_PERCENTAGE,product_code,* from #TMPGST
+			
+                     				
+
+					IF @CXNTYPE='PRT' AND ISNULL(@CPICKLASTTAX,'')='1'
+					BEGIN
+
+	                     
+						     UPDATE A SET CAL_GST_PERCENTAGE =PID.GST_PERCENTAGE 
+							 FROM #TMPGST A
+							 JOIN PIM01106 PIM (NOLOCK) ON PIM.BILL_NO =a.REF_SLS_MEMO_NO AND PIM.INV_DT =a.REF_SLS_MEMO_DT --REFERENCE USE IN ALL TRANSACTION 
+							 JOIN PID01106 PID (NOLOCK) ON PIM.MRR_ID =PID.MRR_ID 
+							 AND LEFT(A.PRODUCT_CODE, ISNULL(NULLIF(CHARINDEX ('@',A.PRODUCT_CODE)-1,-1),LEN(A.PRODUCT_CODE )))=
+							 LEFT(pid.PRODUCT_CODE, ISNULL(NULLIF(CHARINDEX ('@',pid.PRODUCT_CODE)-1,-1),LEN(pid.PRODUCT_CODE )))
+							 WHERE PIM.CANCELLED =0 and pim.INV_MODE =@ninv_mode and pim.receipt_dt >='2017-07-01' and pid.gst_percentage>0
+							 and pim.ac_code =@CAC_CODE
+
+	   			--		if @@spid=90
+							--select 'update #TMPGST step-3',CAL_GST_PERCENTAGE,GST_PERCENTAGE,product_code,* from #TMPGST
+							
+						 
+
+					END
+                    
+					             	SET @cStep='85.58'
+	EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1
+
+					DECLARE @DONOT_CALCULATE_GST_FDN VARCHAR(10)
+					SELECT TOP 1 @DONOT_CALCULATE_GST_FDN=VALUE  FROM CONFIG WHERE CONFIG_OPTION='DONOT_CALCULATE_GST_FDN' 
+				
+                    PRINT '9.IN FINANCIAL  DN/CN UPDATE GST PERCENTAGE 0 IF ENABLED DONOT_CALCULATE_GST_FDN '
+
+                    
+                              
+                     IF isnull(@NDN_TYPE,0)=2 AND ISNULL(@DONOT_CALCULATE_GST_FDN,'')='1' AND  @CXNTYPE IN('PRT')
+                     BEGIN
+                         UPDATE TMP
+                         SET CAL_GST_PERCENTAGE=0,
+                         NET_VALUE_WOTAX=NET_VALUE      
+                         FROM #TMPGST TMP
+                        
+                     
+                     END
+
+					 PRINT 'UPDATE FINANCIAL DEBIT NOTE AGAINST PURCHASE ACCORDING TO PURCHASE '
+	                IF isnull(@NDN_TYPE,0)=2 AND @CXNTYPE='PRT' AND ISNULL(@CREFMRRID,'')<>'' AND ISNULL(@DONOT_CALCULATE_GST_FDN,'')<>'1'
+					 BEGIN
+					      
+						   SET @DTSQL=N' UPDATE A SET 	CAL_GST_PERCENTAGE=PID.GST_PERCENTAGE
+						   FROM #TMPGST A 
+						   JOIN  rmd01106  B (NOLOCK)  ON A.ROW_ID=B.ROW_ID 
+						   JOIN rmm01106 C (NOLOCK)  ON C.RM_ID=B.RM_ID 
+						   JOIN
+						   (
+							SELECT A.MRR_ID,PRODUCT_CODE ,A.GST_PERCENTAGE ,A.HSN_CODE
+							FROM PID01106 A (NOLOCK)
+							JOIN PIM01106 B (NOLOCK) ON A.MRR_ID =B.MRR_ID 
+							WHERE B.CANCELLED =0
+							GROUP BY A.MRR_ID,PRODUCT_CODE ,A.GST_PERCENTAGE ,A.HSN_CODE
+						   ) PID ON PID.MRR_ID=B.MRR_ID
+						   AND PID.PRODUCT_CODE=B.PRODUCT_CODE  '
+						   
+						        
+						  PRINT @DTSQL
+						  EXEC SP_EXECUTESQL @DTSQL
+					 
+					 END
+
+				   IF @CXNTYPE='SLS'
+					BEGIN
+					             	SET @cStep='85.60'
+                   	EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1
+
+	
+
+						 IF ISNULL(@CPICKLASTTAX,'')='1'	
+						 BEGIN
+
+							--IN RETAIL SALE 1 FOR INCLUSIVE AND ANOTHER TRANSACTION 1 FOR EXCLUSIVE PICK  FROM CASH MEMO
+							UPDATE A SET CAL_GST_PERCENTAGE =ISNULL(SLS.GST_PERCENTAGE,A.GST_PERCENTAGE) 
+							FROM   #TMPGST A (NOLOCK)
+							LEFT OUTER JOIN
+							( 
+								SELECT A.CM_NO,A.CM_DT ,B.PRODUCT_CODE,  
+								B.GST_PERCENTAGE ,(CASE WHEN B.TAX_METHOD=1 THEN 2 ELSE 1 END) AS TAX_METHOD,B.HSN_CODE 
+								FROM CMM01106 A (NOLOCK)
+								JOIN CMD01106 B (NOLOCK) ON A.CM_ID =B.CM_ID 
+								JOIN SLS_GST_TAXINFO_CALC C (NOLOCK) ON C.PRODUCT_CODE=B.PRODUCT_CODE
+								WHERE c.sp_id=@cXnId AND A.CANCELLED =0 AND B.QUANTITY >0
+								AND CM_DT >='2017-07-01'
+							) SLS ON SLS.CM_NO =A.REF_SLS_MEMO_NO AND SLS.CM_DT =A.REF_SLS_MEMO_DT AND SLS.PRODUCT_CODE =A.PRODUCT_CODE 
+						   WHERE NET_VALUE <0  
+						
+					
+						END
+								
+					
+
+				END
+
+
+
+
+			end
+
+		
+					             	SET @cStep='85.62'
+	EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1
+
+	declare @nNetValue NUMERIC(10,2),@nNETValuewotax NUMERIC(10,2)
+	   SELECT @CPRODUCT_CODE=PRODUCT_CODE,@NSTOREDGST_PERCENTAGE=gst_percentage , @NCLAGSTPERCENTAGE=CAL_GST_PERCENTAGE ,
+	   @nNetValue=NET_VALUE,@nNETValuewotax=net_value_wotax
+	   FROM #TMPGST WHERE ISNULL(CAL_GST_PERCENTAGE,0)<>isnull(GST_PERCENTAGE,0) AND net<>0
+
+
+	 IF ISNULL(@CPRODUCT_CODE,'')<>''
+	 BEGIN
+		
+		  SET @cStep='85.64'
+		  EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1
+
+		 -- if @@spid=90
+			--select 'validate #TMPGST',@BPARTYREGISTERED PARTYREGISTERED,CAL_GST_PERCENTAGE,GST_PERCENTAGE,product_code,* from #TMPGST
+
+	      SET @CERRORMSG='(V1) Item Code: '+@CPRODUCT_CODE+'(N:'+str(@nNetValue,10,2)+':'+str(@nNETValuewotax,10,2)+') ERROR IN STORED GST PERCENTAGE '+rtrim(ltrim(STR(isnull(@NSTOREDGST_PERCENTAGE,0))))+' AND CALCULATED GST PERCENTAGE '+rtrim(ltrim(STR(isnull(@NCLAGSTPERCENTAGE,0))))
+
+		  IF @CXNTYPE='PRT'
+		  BEGIN
+				SELECT A.PRODUCT_CODE ,A.hsn_code ,A.GST_PERCENTAGE,a.CAL_GST_PERCENTAGE as calculate_gst_pct,@CERRORMSG as errmsg
+				FROM #TMPGST A
+				JOIN HSN_MST B (NOLOCK) ON A.HSN_CODE =B.HSN_CODE 
+				WHERE ISNULL(CAL_GST_PERCENTAGE,0)<>isnull(GST_PERCENTAGE,0)
+		  END
+
+	     RETURN
+	 END 
+
+          	SET @cStep='85.66'
+	EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1
+
+	 --@STORED_TAXABLEVALUE
+	 DECLARE @CAL_TAXABLEVALUE NUMERIC(14,2),@STORED_NETVALUE NUMERIC(14,2),
+	 @CAL_NETVALUE NUMERIC (14,2),@STORED_XNVALUEWITHGST NUMERIC (14,2),
+	 @CAL_XNVALUEWITHGST numeric(14,2)
+
+	 declare @ntaxmethod numeric(1,0)
+
+	  SELECT @nTaxmethod=tax_method,@CPRODUCT_CODE=PRODUCT_CODE,@STORED_NETVALUE=NET_VALUE ,
+	         @CAL_NETVALUE= CASE WHEN ISNULL(TAX_METHOD,1)=1 THEN  xn_value_without_gst ELSE xn_value_with_gst+ISNULL(cess_amount,0)+ISNULL(gst_cess_amount,0) END   
+	  FROM #TMPGST 
+	  WHERE ABS(ISNULL(NET_VALUE,0)-(ISNULL(CASE WHEN ISNULL(TAX_METHOD,1)=1 THEN  xn_value_without_gst ELSE xn_value_with_gst+ISNULL(cess_amount,0)+ISNULL(gst_cess_amount,0) END,0)))>.5
+	
+	--if @@spid=136
+	--	--select 'chk tmpgst',* from #tmpgst
+
+      	SET @cStep='85.68'
+	EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1
+
+	 IF ISNULL(@CPRODUCT_CODE,'')<>''
+	 BEGIN
+	     SET @CERRORMSG='ERROR IN STORED net VALUE: ('+str(@nTaxmethod)+')'+rtrim(ltrim(STR(isnull(@STORED_NETVALUE,0))))+' AND CALCULATED NET VALUE '+rtrim(ltrim(STR(isnull(@CAL_NETVALUE,0))))
+		 +' for Barcode:'+@CPRODUCT_CODE
+	     RETURN
+	 END 
+
+         	SET @cStep='85.70'
+	EXEC SP_CHKXNSAVELOG 'SLS',@cStep,0,@cXnID,1
+
+	  SELECT   @CPRODUCT_CODE=PRODUCT_CODE,
+	           @STORED_XNVALUEWITHGST=xn_value_with_gst ,
+	          @CAL_XNVALUEWITHGST= ISNULL(xn_value_without_gst,0)+ISNULL(GST_AMOUNT,0)  
+	  FROM #TMPGST 
+	  WHERE ABS(ISNULL(xn_value_with_gst,0)-( ISNULL(xn_value_without_gst,0)+ISNULL(GST_AMOUNT,0) ))>.5
+
+	 IF ISNULL(@CPRODUCT_CODE,'')<>''
+	 BEGIN
+	     SET @CERRORMSG='ERROR IN STORED TRANSACTION VALUE WITH GST '+rtrim(ltrim(STR(isnull(@STORED_XNVALUEWITHGST,0))))+' AND TRANSACTION VALUE WITH GST '+rtrim(ltrim(STR(isnull(@CAL_XNVALUEWITHGST,0))))
+	     RETURN
+	 END 
+
+
+	 END_PROC:
+END

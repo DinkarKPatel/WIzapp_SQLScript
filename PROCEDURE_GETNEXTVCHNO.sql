@@ -1,0 +1,272 @@
+CREATE PROCEDURE GETNEXTVCHNO 
+	--	THESE ARE THE INPUT PARAMETERS 
+	@DVCHDT DATETIME,
+	@CVCHCODE VARCHAR(10),
+	@NMODE INTEGER,
+	@NWIDTH INTEGER,
+	@CCOMPANYCODE CHAR(2) = '01', 
+	@CPREFIX VARCHAR(40) = '', 
+	@CNEWKEYVAL VARCHAR(40) OUTPUT,
+	@CFINYEAR VARCHAR(10) = '',
+	@bCalledFromPostVoucher BIT=0,
+	@nSpId VARCHAR(40)=''
+--	WITH ENCRYPTION
+AS
+BEGIN
+	--select @DVCHDT ,
+	--@CVCHCODE,
+	--@NMODE ,
+	--@NWIDTH ,
+	--@CCOMPANYCODE , 
+	--@CPREFIX ,
+	--len(@cPrefix)
+	
+
+BEGIN TRY
+
+START_PROC:
+
+	print 'gtn-1'
+	DECLARE @NLASTKEYVAL INTEGER,@NVALLEN INTEGER,@CZEROS VARCHAR(40),@cCmd NVARCHAR(MAX),@NLOOP BIT,
+	@cVchFilterChk VARCHAR(100),@BLOOP BIT,@CSTEP VARCHAR(10),@cErrormsg varchar(max)
+
+	SELECT @NMODE = ISNULL(VALUE,0) FROM CONFIG WHERE CONFIG_OPTION = 'VOUCHER_NO_SYSTEM' 
+	
+	SET @cStep='10'
+	IF @NMODE NOT BETWEEN 1 AND 3
+		SELECT @NMODE = 1
+	
+	IF @NMODE = 1				--	DATE WISE
+		SELECT @CVCHCODE = ''
+	ELSE IF @NMODE = 2			-- TYPE WISE
+		SELECT @DVCHDT = ''
+	ELSE 						-- RUNNING SERIAL	
+		SELECT @DVCHDT = '', @CVCHCODE = '' 
+	
+	SET @cStep='20'
+	print 'gtn-2'
+	IF NOT EXISTS ( SELECT VOUCHER_NO FROM NEXTVCH
+					WHERE VOUCHER_DT = @DVCHDT 
+					AND VOUCHER_CODE = @CVCHCODE
+					AND COMPANY_CODE = @CCOMPANYCODE
+					AND PREFIX = @CPREFIX
+					AND FIN_YEAR = @CFINYEAR )
+	BEGIN
+		INSERT NEXTVCH (VOUCHER_DT, VOUCHER_CODE, VOUCHER_NO, COMPANY_CODE, PREFIX,FIN_YEAR ) 
+			 VALUES ( @DVCHDT, @CVCHCODE, '', @CCOMPANYCODE, @CPREFIX , @CFINYEAR )
+	END
+	
+	print 'gtn-3'
+
+	SELECT 	@NVALLEN = @NWIDTH - LEN(@CPREFIX)
+	IF @NVALLEN < 0
+		SELECT 	@NVALLEN = 0
+	
+	SET @cStep='30'
+lblRecheck:
+
+	SELECT 	@NLASTKEYVAL = CAST(RIGHT(VOUCHER_NO, @NVALLEN) AS INTEGER)
+		FROM NEXTVCH
+		WHERE VOUCHER_DT = @DVCHDT 
+		AND VOUCHER_CODE = @CVCHCODE
+		AND COMPANY_CODE = @CCOMPANYCODE
+		AND PREFIX		 = @CPREFIX
+		AND FIN_YEAR = @CFINYEAR
+	
+	print 'gtn-4'
+	--SELECT @NLASTKEYVAL,@NVALLEN,@NWIDTH,LEN(@CPREFIX)
+		
+	SELECT @NLASTKEYVAL = (ISNULL(@NLASTKEYVAL,0) + 1)
+	SELECT @CZEROS = REPLICATE('0', @NVALLEN - LEN(@NLASTKEYVAL))
+	
+	SET @cStep='40'
+	SET @NLOOP=0
+	
+	IF @bCalledFromPostVoucher=1
+		SELECT 	@CNEWKEYVAL = LTRIM(RTRIM(STR(@NLASTKEYVAL)))
+	ELSE
+		SELECT 	@CNEWKEYVAL = LTRIM(RTRIM(@CPREFIX)) + LTRIM(RTRIM(@CZEROS)) + LTRIM(RTRIM(CAST(@NLASTKEYVAL AS VARCHAR(40))))
+     
+	print 'gtn-5-'+str(len(@CNEWKEYVAL))+str(len(@cPrefix))+str(len(@CZEROS))+STR(LEN(CAST(@NLASTKEYVAL AS VARCHAR(40))))
+	UPDATE NEXTVCH
+		SET VOUCHER_NO = LTRIM(RTRIM(@CNEWKEYVAL))
+		WHERE VOUCHER_DT = @DVCHDT 
+		AND VOUCHER_CODE = @CVCHCODE
+		AND COMPANY_CODE = @CCOMPANYCODE
+		AND PREFIX = @CPREFIX
+		AND FIN_YEAR=@CFINYEAR		
+	
+	SET @cVchFilterChk=''
+	IF @CVCHCODE<>''
+		SET @cVchFilterChk=' AND voucher_code='''+@CVCHCODE+''''
+	
+	SET @cStep='50'
+	IF @DVCHDT<>''
+		SET @cVchFilterChk=@cVchFilterChk+' AND voucher_dt='''+CONVERT(VARCHAR,@DVCHDT,110)+''''
+
+	IF @bCalledFromPostVoucher=0
+	BEGIN
+		SET @cStep='60'
+		SET @cCmd=N'IF EXISTS ( SELECT TOP 1 voucher_no FROM vm01106 (NOLOCK) WHERE voucher_no='''+@CNEWKEYVAL+'''
+			AND FIN_YEAR = '''+@CFINYEAR+''''+@cVchFilterChk+')    
+			SET @NLOOPOUTPUT=0    
+		ELSE    
+			SET @NLOOPOUTPUT=1'    
+		PRINT @CCMD    
+		EXEC SP_EXECUTESQL @CCMD, N'@NLOOPOUTPUT BIT OUTPUT',@NLOOPOUTPUT=@NLOOP OUTPUT
+	END
+	ELSE
+	IF @bCalledFromPostVoucher=1
+	BEGIN
+	   SET @BLOOP=1
+
+	 --  if @@spid=143
+		--select @CNEWKEYVAL next_vchno,@nMode
+
+	   SET @cStep='70'
+	   DECLARE @DTVOUCHERDATE DATETIME,@nMEMONOVAL INT,@cLastKEYVAL VARCHAR(20),@bInnerLoop BIT
+
+	   SET @nMEMONOVAL=@CNEWKEYVAL
+
+	   SELECT vm_id,voucher_no INTO #tmpVm FROM ACT_VM01106_UPLOAD (NOLOCK) WHERE 1=2
+	   SELECT vm_id,voucher_no INTO #tmpVmDup FROM ACT_VM01106_UPLOAD (NOLOCK) WHERE 1=2
+
+	   WHILE @BLOOP=1
+	   BEGIN
+			
+			SET @cStep='80'
+			truncate table #tmpVm
+
+			SET @DTVOUCHERDATE=''
+
+			SELECT TOP 1 @DTVOUCHERDATE=voucher_dt FROM ACT_VM01106_UPLOAD (NOLOCK)
+			WHERE SP_ID=@NSPID AND LEFT(VOUCHER_NO,5)='LATER'  AND chk=1	                         
+			ORDER BY voucher_dt
+
+			IF ISNULL(@DTVOUCHERDATE,'')=''
+				break
+
+			SET @CSTEP=300
+			
+			SET @cStep='90'
+			IF @nMode=1
+				 INSERT INTO #tmpVm (vm_id,voucher_no)
+				 SELECT vm_id,voucher_no  FROM ACT_VM01106_UPLOAD (NOLOCK)
+				 WHERE SP_ID=@NSPID AND	 chk=1 and voucher_dt=@DTVOUCHERDATE
+				 AND LEFT(VOUCHER_NO,5)='LATER' 
+			ELSE
+				 INSERT INTO #tmpVm (vm_id,voucher_no)
+				 SELECT vm_id,voucher_no  FROM ACT_VM01106_UPLOAD (NOLOCK)
+				 WHERE SP_ID=@NSPID AND	 chk=1 AND LEFT(VOUCHER_NO,5)='LATER' 
+		
+			SET @CSTEP=310
+			SELECT 	@NVALLEN = 10 - LEN(@CPREFIX)
+			IF @NVALLEN < 0
+				SELECT 	@NVALLEN = 0
+			
+			SET @cStep='100'
+			SET @nMEMONOVAL=@nMEMONOVAL-1
+			UPDATE #tmpVm  SET VOUCHER_NO = LTRIM(RTRIM(@CPREFIX)) + LTRIM(RTRIM(REPLICATE('0', @NVALLEN - LEN(@nMEMONOVAL))))+
+			LTRIM(RTRIM(STR(@nMEMONOVAL))),
+			@nMEMONOVAL=@nMEMONOVAL+1
+
+			SET @bInnerLoop=0
+
+			WHILE @bInnerLoop=0
+			BEGIN
+				SET @cStep='110'
+				TRUNCATE TABLE #tmpVmDup
+				IF @nMode=1
+					INSERT INTO #tmpVmDup (vm_id,VOUCHER_NO)
+					SELECT b.VM_ID,a.VOUCHER_NO from vm01106 a (NOLOCK) JOIN #tmpVm b ON 
+					a.VOUCHER_NO=b.VOUCHER_NO AND a.VOUCHER_DT=@DTVOUCHERDATE AND a.cancelled=0
+				ELSE
+				IF @nMode=2
+					INSERT INTO #tmpVmDup (vm_id,VOUCHER_NO)
+					SELECT b.VM_ID,a.VOUCHER_NO from vm01106 a (NOLOCK) JOIN #tmpVm b ON 
+					a.VOUCHER_NO=b.VOUCHER_NO 
+					WHERE a.VOUCHER_CODE=@CVCHCODE AND a.fin_year=@CFINYEAR AND a.cancelled=0 
+					
+				ELSE
+				IF @nMode=3
+					INSERT INTO #tmpVmDup (vm_id,VOUCHER_NO)
+					SELECT b.VM_ID,a.VOUCHER_NO from vm01106 a (NOLOCK) JOIN #tmpVm b ON 
+					a.VOUCHER_NO=b.VOUCHER_NO 
+					WHERE a.fin_year=@CFINYEAR AND  a.cancelled=0
+
+				IF EXISTS (SELECT TOP 1 vm_id FROM #tmpVmDup)
+				BEGIN
+					SET @cStep='120'
+					UPDATE #tmpVmDup  SET VOUCHER_NO = LTRIM(RTRIM(@CPREFIX)) + LTRIM(RTRIM(REPLICATE('0', @NVALLEN - LEN(@nMEMONOVAL))))+
+					LTRIM(RTRIM(STR(@nMEMONOVAL))),
+					@nMEMONOVAL=@nMEMONOVAL+1
+
+					UPDATE a SET voucher_no=b.voucher_no FROM #tmpVm a 
+					JOIN #tmpVmDup b ON a.VM_ID=b.vm_id
+				END
+				ELSE
+					BREAK
+			END
+
+			SET @CSTEP=130
+			SELECT 	@cLastKEYVAL = LTRIM(RTRIM(@cPrefix)) + LTRIM(RTRIM(REPLICATE('0', @NVALLEN - LEN(@nMEMONOVAL))))+
+			ltrim(rtrim(str(@nMEMONOVAL)))
+		
+			IF @nMode=1
+				UPDATE NEXTVCH
+					SET VOUCHER_NO = LTRIM(RTRIM(@cLastKEYVAL))
+					WHERE VOUCHER_DT = @DTVOUCHERDATE 
+					AND PREFIX = @cPrefix
+					AND FIN_YEAR=@CFINYEAR		   
+			ELSE
+			IF @nMode=2
+				UPDATE NEXTVCH
+					SET VOUCHER_NO = LTRIM(RTRIM(@cLastKEYVAL))
+					WHERE VOUCHER_code=@CVCHCODE
+					AND PREFIX = @cPrefix
+					AND FIN_YEAR=@CFINYEAR		   
+			ELSE
+				UPDATE NEXTVCH
+					SET VOUCHER_NO = LTRIM(RTRIM(@cLastKEYVAL))
+					WHERE PREFIX = @cPrefix 	AND FIN_YEAR=@CFINYEAR		   
+			
+			--if @@spid=143
+			--	select 'check tmpvm before replacing voucher no',* from #tmpvm
+
+			SET @CSTEP=140
+			UPDATE a SET voucher_no=b.voucher_no FROM  ACT_VM01106_UPLOAD a WITH (ROWLOCK)
+			JOIN #tmpVm b ON a.vm_id=b.vm_id
+			WHERE a.sp_id=@nSpId
+
+			--select 'check pending',voucher_no, @DTVOUCHERDATe,*  FROM  ACT_VM01106_UPLOAD a WITH (nolock)
+			--WHERE a.sp_id=@nSpId
+
+			IF @nMode<>1
+				BREAK
+
+		END
+	END
+
+	--if @@spid=143
+	--	select 'check voucher nos ',* from #tmpVm
+
+	IF @bCalledFromPostVoucher=0 AND @NLOOP=0
+		GOTO lblRecheck
+	
+	GOTO END_PROC
+END TRY
+
+BEGIN CATCH
+	SET @cErrormsg='Error in Procedure Getnextvchno at Step#'+@CSTEP+' '+ERROR_MESSAGE()
+	print 'catch of getnextvchno:'+@cErrormsg
+	GOTO END_PROC
+END CATCH
+
+END_PROC:
+
+	IF @bCalledFromPostVoucher=1
+		INSERT INTO #tmpNextVchOutput (errmsg)
+		SELECT ISNULL(@cErrormsg,'')
+
+	print 'last step of getnextvch:'+@cStep	
+END

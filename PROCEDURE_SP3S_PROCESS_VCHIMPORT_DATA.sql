@@ -1,0 +1,212 @@
+CREATE PROCEDURE SP3S_PROCESS_VCHIMPORT_DATA
+(
+	@cTempTableName  VARCHAR(MAX),    
+	@cDEPT_ID   VARCHAR(5) ,
+	@nMode			NUMERIC(1)   
+)
+AS
+BEGIN
+
+	DECLARE @ERR BIT=0,@ERROR_MSG VARCHAR(1000)='',@cCMD NVARCHAR(MAX)
+	if (@nMode IN (0,2))
+	BEGIN
+		SET @cCMD=N'update '+@cTempTableName+' SET x_type=XNTYPE'
+		PRINT @ccmd     
+		EXEC SP_EXECUTESQL @cCMD  
+
+		SET @cCMD=N'update '+@cTempTableName+' SET AMOUNT=REPLACE(AMOUNT,'','','''')'
+		PRINT @ccmd     
+		EXEC SP_EXECUTESQL @cCMD  
+
+
+		SET @cCMD=N'update '+@cTempTableName+' SET PAYMENT_AMOUNT=CONVERT(NUMERIC(14,3),AMOUNT) WHERE X_type=''Dr'''    
+		PRINT @ccmd     
+		EXEC SP_EXECUTESQL @cCMD    
+    
+		SET @cCMD=N'update '+@cTempTableName+' SET RECEIPT_AMOUNT=CONVERT(NUMERIC(14,3),AMOUNT) WHERE X_type=''Cr'''           
+		PRINT @ccmd     
+		EXEC SP_EXECUTESQL @cCMD    
+
+		SET @cCMD=N'update '+@cTempTableName+' SET AMOUNT=0 WHERE AMOUNT IS NULL'    
+		PRINT @ccmd     
+		EXEC SP_EXECUTESQL @cCMD    
+    
+		SET @cCMD=N'update a SET  a.ref_no=a.refno,
+		a.cost_center_dept_id= ISNULL(a.COSTCENTER,'''') ,    
+		a.voucher_dt=a.voucherdate 
+		,a.DEBIT_AMOUNT=CONVERT(NUMERIC(14,2),ISNULL(a.PAYMENT_AMOUNT,0))    
+		,a.CREDIT_AMOUNT=CONVERT(NUMERIC(14,2),ISNULL(a.RECEIPT_AMOUNT,0))    
+		,a.x_type=a.xntype,A.ac_code=B.ac_code,A.bill_by_bill=B.BILL_BY_BILL,A.ac_name=B.Ac_name,
+		A.voucher_code=vt.VOUCHER_CODE,A.Voucher_type=vt.VOUCHER_TYPE
+		,a.cr_days=ISNULL(a.CR_DAYS,0),a.narration=ISNULL(a.narration,'''')
+		FROM '+@cTempTableName+' a     
+		JOIN LMV01106 B ON REPLACE(b.ac_name,'' '','''')=REPLACE(a.accountname  ,'' '','''')  
+		JOIN VCHTYPE vt ON vt.VOUCHER_TYPE=A.VOUCHERTYPE
+		LEFT OUTER JOIN location c ON c.dept_id=a.COSTCENTER'    
+    
+	PRINT @ccmd     
+	EXEC SP_EXECUTESQL @cCMD   
+	END
+	else
+	BEGIN
+		EXEC SP3S_PROCESS_IMPORT_VCH    @cTempTableName  =@cTempTableName,@cDEPT_ID   = @cDEPT_ID
+	END
+	if (@nMode IN (2))
+	BEGIN
+		SET @cCMD=N'SELECT * FROM '+@cTempTableName+' a'    
+		PRINT @ccmd     
+		EXEC SP_EXECUTESQL @cCMD   
+	END
+	IF OBJECT_ID('TEMPDB..#dtVM','U') IS NOT NULL
+		DROP TABLE #dtVM
+
+			IF OBJECT_ID('TEMPDB..#dtVD','U') IS NOT NULL
+		DROP TABLE #dtVD
+
+			IF OBJECT_ID('TEMPDB..#dtBILL','U') IS NOT NULL
+		DROP TABLE #dtBILL
+
+
+
+	CREATE  TABLE #dtVM (VM_ID VARCHAR(100),VOUCHER_DT DATETIME,REF_NO VARCHAR(50),VOUCHER_TYPE VARCHAR(50),VOUCHER_CODE VARCHAR(50),VOUCHER_NO VARCHAR(20),DRTOTAL NUMERIC(14,2) ,CRTOTAL NUMERIC(14,2),ERR_MSG VARCHAR(MAX))
+	CREATE TABLE #dtVD (VM_ID VARCHAR(100),VD_ID VARCHAR(50),AC_NAME VARCHAR(500),AC_CODE VARCHAR(50),BILL_BY_BILL BIT,REF_NO VARCHAR(50),x_type VARCHAR(5),cost_center_dept_id VARCHAR(5),DEBIT_AMOUNT NUMERIC(14,2) ,CREDIT_AMOUNT NUMERIC(14,2),NARRATION VARCHAR(200))
+	CREATE TABLE #dtBILL (REF_NO VARCHAR(50),VM_ID VARCHAR(100),VD_ID VARCHAR(50),BILL_NO VARCHAR(500),x_type VARCHAR(5),AMOUNT NUMERIC(14,2) ,CR_DAYS NUMERIC(5))
+
+
+	SET @cCMD=N'SELECT ''LATER''+LEFT(CAST(NEWID() AS VARCHAR(50)),35) AS VM_ID,VOUCHER_DT,REF_NO,VOUCHER_TYPE,VOUCHER_CODE,''LATER'' AS VOUCHER_NO,SUM(DEBIT_AMOUNT) AS DRTOTAL,SUM(CREDIT_AMOUNT) AS CRTOTAL,'''' AS ERR_MSG
+	FROM '+@cTempTableName+'
+	GROUP BY REF_NO,VOUCHER_DT,VOUCHER_TYPE,VOUCHER_CODE'
+
+	PRINT @cCMD
+	INSERT INTO #dtVM(VM_ID ,VOUCHER_DT ,REF_NO ,VOUCHER_TYPE ,VOUCHER_CODE ,VOUCHER_NO ,DRTOTAL,CRTOTAL,ERR_MSG)
+	EXEC SP_EXECUTESQL @cCMD
+
+	SET @cCMD=N'SELECT b.VM_ID, ''LATER''+LEFT(CAST(NEWID() AS VARCHAR(50)),35) AS VD_ID,a.ac_name,a.ac_code,a.bill_by_bill,a.REF_NO,a.x_type,a.cost_center_dept_id,SUM(a.debit_amount) AS debit_amount,SUM(a.credit_amount) AS credit_amount,a.NARRATION
+	FROM '+@cTempTableName+' a
+	JOIN #dtVM B ON B.REF_NO=a.REF_NO AND a.VOUCHER_DT=b.VOUCHER_DT AND a.VOUCHER_CODE=b.VOUCHER_code
+	GROUP BY b.VM_ID, a.ac_name,a.ac_code,a.bill_by_bill,a.REF_NO,a.x_type,a.cost_center_dept_id,a.NARRATION
+	'
+	PRINT @cCMD
+	INSERT INTO #dtVD(VM_ID ,VD_ID ,AC_NAME ,AC_CODE ,BILL_BY_BILL ,REF_NO ,x_type ,cost_center_dept_id ,DEBIT_AMOUNT ,CREDIT_AMOUNT ,NARRATION )
+	EXEC SP_EXECUTESQL @cCMD
+
+	SET @cCMD=N'SELECT a.REF_NO,b.VM_ID, b.VD_ID,a.BILL_NO ,a.x_type ,a.AMOUNT ,a.CR_DAYS
+	FROM '+@cTempTableName+' a
+	JOIN #dtVD B ON B.REF_NO=a.REF_NO AND a.ac_code=b.ac_code 
+	JOIN #dtVM B1 ON B1.vm_id=B.vm_id
+	WHERE ISNULL(a.bill_no,'''')<>'''''
+	PRINT @cCMD
+	INSERT INTO #dtBILL(REF_NO,VM_ID ,VD_ID ,BILL_NO ,x_type ,AMOUNT  ,CR_DAYS)
+	EXEC SP_EXECUTESQL @cCMD
+
+	SELECT * FROM #dtVM where ISNULL( ref_no,'')<>'' ORDER BY VOUCHER_DT
+	SELECT * FROM #dtVD
+	select * from #dtBILL
+
+
+END
+
+/*This is for forex related changes
+CREATE PROCEDURE SP3S_PROCESS_VCHIMPORT_DATA
+(
+	@cTempTableName  VARCHAR(MAX),    
+	@cDEPT_ID   VARCHAR(5) ,
+	@nMode			NUMERIC(1)   
+)
+AS
+BEGIN
+
+	DECLARE @ERR BIT=0,@ERROR_MSG VARCHAR(1000)='',@cCMD NVARCHAR(MAX)
+	if (@nMode IN (0,2))
+	BEGIN
+		SET @cCMD=N'update '+@cTempTableName+' SET x_type=XNTYPE'
+		PRINT @ccmd     
+		EXEC SP_EXECUTESQL @cCMD  
+
+		SET @cCMD=N'update '+@cTempTableName+' SET PAYMENT_AMOUNT=CONVERT(NUMERIC(14,3),AMOUNT) WHERE X_type=''Dr'''    
+		PRINT @ccmd     
+		EXEC SP_EXECUTESQL @cCMD    
+    
+		SET @cCMD=N'update '+@cTempTableName+' SET RECEIPT_AMOUNT=CONVERT(NUMERIC(14,3),AMOUNT) WHERE X_type=''Cr'''           
+		PRINT @ccmd     
+		EXEC SP_EXECUTESQL @cCMD    
+
+		SET @cCMD=N'update '+@cTempTableName+' SET AMOUNT=0 WHERE AMOUNT IS NULL'    
+		PRINT @ccmd     
+		EXEC SP_EXECUTESQL @cCMD    
+    
+		SET @cCMD=N'update a SET  a.ref_no=a.refno,
+		a.cost_center_dept_id= ISNULL(a.COSTCENTER,'''') ,    
+		a.voucher_dt=a.voucherdate 
+		,a.DEBIT_AMOUNT=CONVERT(NUMERIC(14,2),ISNULL(a.PAYMENT_AMOUNT,0))    
+		,a.CREDIT_AMOUNT=CONVERT(NUMERIC(14,2),ISNULL(a.RECEIPT_AMOUNT,0))    
+		,a.x_type=a.xntype,A.ac_code=B.ac_code,A.bill_by_bill=B.BILL_BY_BILL,A.ac_name=B.Ac_name,
+		A.voucher_code=vt.VOUCHER_CODE,A.Voucher_type=vt.VOUCHER_TYPE
+		,a.cr_days=ISNULL(a.CR_DAYS,0),a.narration=ISNULL(a.narration,'''')
+		FROM '+@cTempTableName+' a     
+		JOIN LMV01106 B ON REPLACE(b.ac_name,'' '','''')=REPLACE(a.accountname  ,'' '','''')  
+		JOIN VCHTYPE vt ON vt.VOUCHER_TYPE=A.VOUCHERTYPE
+		LEFT OUTER JOIN location c ON c.dept_id=a.COSTCENTER'    
+    
+	PRINT @ccmd     
+	EXEC SP_EXECUTESQL @cCMD   
+	END
+	else
+	BEGIN
+		EXEC SP3S_PROCESS_IMPORT_VCH    @cTempTableName  =@cTempTableName,@cDEPT_ID   = @cDEPT_ID
+	END
+	if (@nMode IN (2))
+	BEGIN
+		SET @cCMD=N'SELECT * FROM '+@cTempTableName+' a'    
+		PRINT @ccmd     
+		EXEC SP_EXECUTESQL @cCMD   
+	END
+	IF OBJECT_ID('TEMPDB..#dtVM','U') IS NOT NULL
+		DROP TABLE #dtVM
+
+			IF OBJECT_ID('TEMPDB..#dtVD','U') IS NOT NULL
+		DROP TABLE #dtVD
+
+			IF OBJECT_ID('TEMPDB..#dtBILL','U') IS NOT NULL
+		DROP TABLE #dtBILL
+
+
+
+	CREATE  TABLE #dtVM (VM_ID VARCHAR(100),VOUCHER_DT DATETIME,REF_NO VARCHAR(50),VOUCHER_TYPE VARCHAR(50),VOUCHER_CODE VARCHAR(50),VOUCHER_NO VARCHAR(20),DRTOTAL NUMERIC(14,2) ,CRTOTAL NUMERIC(14,2),ERR_MSG VARCHAR(MAX))
+	CREATE TABLE #dtVD (VM_ID VARCHAR(100),VD_ID VARCHAR(50),AC_NAME VARCHAR(500),AC_CODE VARCHAR(50),BILL_BY_BILL BIT,REF_NO VARCHAR(50),x_type VARCHAR(5),cost_center_dept_id VARCHAR(5),DEBIT_AMOUNT NUMERIC(14,2) ,CREDIT_AMOUNT NUMERIC(14,2),NARRATION VARCHAR(200))
+	CREATE TABLE #dtBILL (REF_NO VARCHAR(50),VM_ID VARCHAR(100),VD_ID VARCHAR(50),BILL_NO VARCHAR(500),x_type VARCHAR(5),AMOUNT NUMERIC(14,2) ,CR_DAYS NUMERIC(5))
+
+
+	SET @cCMD=N'SELECT ''LATER''+LEFT(CAST(NEWID() AS VARCHAR(50)),35) AS VM_ID,VOUCHER_DT,REF_NO,VOUCHER_TYPE,VOUCHER_CODE,''LATER'' AS VOUCHER_NO,SUM(DEBIT_AMOUNT) AS DRTOTAL,SUM(CREDIT_AMOUNT) AS CRTOTAL,'''' AS ERR_MSG
+	FROM '+@cTempTableName+'
+	GROUP BY REF_NO,VOUCHER_DT,VOUCHER_TYPE,VOUCHER_CODE'
+
+	PRINT @cCMD
+	INSERT INTO #dtVM(VM_ID ,VOUCHER_DT ,REF_NO ,VOUCHER_TYPE ,VOUCHER_CODE ,VOUCHER_NO ,DRTOTAL,CRTOTAL,ERR_MSG)
+	EXEC SP_EXECUTESQL @cCMD
+
+	SET @cCMD=N'SELECT b.VM_ID, ''LATER''+LEFT(CAST(NEWID() AS VARCHAR(50)),35) AS VD_ID,a.ac_name,a.ac_code,a.bill_by_bill,a.REF_NO,a.x_type,a.cost_center_dept_id,SUM(a.debit_amount) AS debit_amount,SUM(a.credit_amount) AS credit_amount,a.NARRATION
+	FROM '+@cTempTableName+' a
+	JOIN #dtVM B ON B.REF_NO=a.REF_NO AND a.VOUCHER_DT=b.VOUCHER_DT AND a.VOUCHER_CODE=b.VOUCHER_code
+	GROUP BY b.VM_ID, a.ac_name,a.ac_code,a.bill_by_bill,a.REF_NO,a.x_type,a.cost_center_dept_id,a.NARRATION
+	'
+	PRINT @cCMD
+	INSERT INTO #dtVD(VM_ID ,VD_ID ,AC_NAME ,AC_CODE ,BILL_BY_BILL ,REF_NO ,x_type ,cost_center_dept_id ,DEBIT_AMOUNT ,CREDIT_AMOUNT ,NARRATION )
+	EXEC SP_EXECUTESQL @cCMD
+
+	SET @cCMD=N'SELECT a.REF_NO,b.VM_ID, b.VD_ID,a.BILL_NO ,a.x_type ,a.AMOUNT ,a.CR_DAYS
+	FROM '+@cTempTableName+' a
+	JOIN #dtVD B ON B.REF_NO=a.REF_NO AND a.ac_code=b.ac_code 
+	JOIN #dtVM B1 ON B1.vm_id=B.vm_id
+	WHERE ISNULL(a.bill_no,'''')<>'''''
+	PRINT @cCMD
+	INSERT INTO #dtBILL(REF_NO,VM_ID ,VD_ID ,BILL_NO ,x_type ,AMOUNT  ,CR_DAYS)
+	EXEC SP_EXECUTESQL @cCMD
+
+	SELECT * FROM #dtVM where ISNULL( ref_no,'')<>'' ORDER BY VOUCHER_DT
+	SELECT * FROM #dtVD
+	select * from #dtBILL
+
+
+END
+*/

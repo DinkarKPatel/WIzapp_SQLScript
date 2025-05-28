@@ -1,0 +1,23 @@
+CREATE FUNCTION FN_CHECK_POSTACT 
+(
+@MEMO_ID VARCHAR(50),
+@XN_TYPE VARCHAR(20),
+@VM_ID VARCHAR(40)
+)
+RETURNS BIT
+AS
+BEGIN
+           DECLARE @LRETVAL BIT
+           SET @LRETVAL=1
+           
+           IF EXISTS (SELECT TOP 1 'U' FROM POSTACT_VOUCHER_LINK A JOIN VM01106 B ON A.VM_ID=B.VM_ID
+           WHERE MEMO_ID=@MEMO_ID AND XN_TYPE=@XN_TYPE AND A.VM_ID<>@VM_ID AND CANCELLED=0 
+            AND ISNULL(MEMO_ID,'')<>'')
+           BEGIN
+             SET @LRETVAL=0
+           END
+           
+           RETURN @LRETVAL
+           
+           
+END

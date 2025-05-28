@@ -1,0 +1,5 @@
+
+
+
+IF (NOT ISNULL(OBJECT_ID ('_TEMP_ATTR_'),'') ='')
+			DROP TABLE _TEMP_ATTR_

@@ -1,0 +1,32 @@
+if exists (select top 1 * from INFORMATION_SCHEMA.columns where COLUMN_NAME='validation_source'
+			and table_name='sku_gv_mst')
+begin
+     
+	 
+		DECLARE @CCONSNAME VARCHAR(1000),@CCMD1 NVARCHAR(MAX)
+
+		SELECT @CCONSNAME=O.NAME  FROM SYSOBJECTS O 
+		INNER JOIN SYSCOLUMNS C
+		ON O.ID = C.CDEFAULT
+		INNER JOIN SYSOBJECTS T
+		ON C.ID = T.ID
+		WHERE O.XTYPE = 'D'
+		AND C.NAME = 'VALIDATION_SOURCE'
+		AND T.NAME = 'SKU_GV_MST'
+
+		IF ISNULL(@CCONSNAME,'')<>''
+		BEGIN
+
+			 SET @CCMD1=N' ALTER TABLE SKU_GV_MST DROP CONSTRAINT ' +@CCONSNAME
+			 EXEC SP_EXECUTESQL @CCMD1
+			
+		 END
+       
+
+
+	ALTER TABLE sku_gv_mst drop column validation_source
+
+
+end
+
+	

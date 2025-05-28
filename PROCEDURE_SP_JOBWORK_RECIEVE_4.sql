@@ -1,0 +1,361 @@
+create PROC [DBO].SP_JOBWORK_RECIEVE_4    
+@NQUERYID INT,                          
+@CWHERE NVARCHAR(4000)='',            
+@NMODE INT=0,    
+@BWIP BIT=0,    
+@NISSUE_MODE BIT=0,    
+@cLocID VARCHAR(5)='',
+@CSP_ID VARCHAR(50)='',
+@BFILLITEMDETAILS BIT=0   ,
+@CPRODUCT_CODE VARCHAR(50)='',
+@NPASTE int=0 ,
+@CJOBCARD_ID varchar(50)='',
+@CRECEIPT_ID varchar(50)=''
+AS                          
+BEGIN       
+
+
+if @CSP_ID=''
+   set @CSP_ID=@@SPID
+
+   DECLARE @CTABLENAME VARCHAR(100),@dtsql nvarchar(max),@cerrmsg varchar(100),@cTradingPc varchar(100)
+   SET @CTABLENAME='##TEMP_PCODE_'+RTRIM(LTRIM(@CSP_ID))
+   select a.product_code into #TEMP_PCODE  from pmt01106 A where 1=2
+   if @NISSUE_MODE=1
+   begin
+       
+	  IF ( SELECT COUNT(*) FROM JOBWORK_PMT (NOLOCK) WHERE TRADING_PRODUCT_CODE=@CPRODUCT_CODE and isnull(TRADING_PRODUCT_CODE,'')<>'')>0
+	  BEGIN
+	     
+		  set @cTradingPc=@CPRODUCT_CODE
+		  
+		  --select a.product_code into #TEMP_PCODE  from pmt01106 A where 1=2
+		  
+		  insert into #TEMP_PCODE(product_code)
+	      SELECT A.PRODUCT_CODE 
+		  FROM JOBWORK_ISSUE_DET A (NOLOCK)
+		  JOIN JOBWORK_ISSUE_MST B (NOLOCK) ON A.ISSUE_ID =B.ISSUE_ID
+		  JOIN  JOBWORK_PMT (NOLOCK) C ON A.PRODUCT_CODE=C.PRODUCT_CODE
+		  join ORD_PLAN_BARCODE_DET obd (nolock) on obd.PRODUCT_CODE =c.product_code 
+		  JOIN ORD_PLAN_DET OD (NOLOCK) ON OD.ROW_ID =OBD.REFROW_ID
+		  WHERE c.TRADING_PRODUCT_CODE=@CPRODUCT_CODE AND B.CANCELLED=0 
+		  and (@CJOBCARD_ID ='' or od.MEMO_ID =@CJOBCARD_ID)
+		  GROUP BY A.PRODUCT_CODE
+		  
+	      SET @CTABLENAME='#TEMP_PCODE'
+		  SET @NPASTE=1
+		
+
+	  END
+	  ELSE IF @CRECEIPT_ID<>''
+	  BEGIN
+	      
+	    ;WITH TRADING_PC AS 
+	    (
+	      SELECT B.TRADING_PRODUCT_CODE  
+	      FROM JOBWORK_RECEIPT_DET A (NOLOCK)
+	      JOIN JOBWORK_PMT B (NOLOCK) ON A.product_code  =B.product_code
+	      WHERE A.RECEIPT_ID =@CRECEIPT_ID
+	      and ISNULL(B.TRADING_PRODUCT_CODE ,'')<>''
+	      group by B.TRADING_PRODUCT_CODE
+	     )
+	     insert into #TEMP_PCODE(product_code)
+	     SELECT A.PRODUCT_CODE 
+	     FROM JOBWORK_PMT A (nolock)
+	     JOIN TRADING_PC B (nolock) ON A.TRADING_PRODUCT_CODE =B.TRADING_PRODUCT_CODE 
+	     
+	     SET @CTABLENAME='#TEMP_PCODE'
+		 SET @NPASTE=1
+	     
+	  END
+
+   end
+
+
+   if @NPASTE=1
+       goto LBLPASTE
+
+
+
+
+         
+		 IF @CSP_ID=''
+		 SET @CSP_ID=CAST(@@SPID AS VARCHAR(50))
+
+		IF ISNULL(@BFILLITEMDETAILS,0)=1
+		    GOTO LBLBARCODEDET
+			
+
+			IF ISNULL(@NISSUE_MODE,0)=1 AND @CPRODUCT_CODE=''
+			    SET @CPRODUCT_CODE='BLANKROW'
+	
+	
+		DECLARE @LEVEL_NO INT
+		SELECT TOP 1 @LEVEL_NO=LEVEL_NO  FROM XN_APPROVAL_CHECKLIST_LEVEL_USERS A  
+		WHERE A.XN_TYPE ='JWR'	AND DEPT_ID =@cLocID
+
+		SET @LEVEL_NO=ISNULL(@LEVEL_NO,0)
+
+	               
+	IF OBJECT_ID('TEMPDB..#TMPJWI','U') IS NOT NULL    
+		DROP TABLE #TMPJWI    
+	IF OBJECT_ID('TEMPDB..#TMPJWI_BOM','U') IS NOT NULL    
+		DROP TABLE #TMPJWI_BOM    
+
+	SELECT ISSUE_ID INTO #TMPJWI_BOM FROM JOBWORK_ISSUE_MST WHERE 1=2    
+
+	
+	DELETE FROM JWR_barcode WHERE SP_ID=@CSP_ID
+
+
+	INSERT INTO JWR_barcode(ISSUE_ID,ROW_ID,RECEIVE_QUNATITY,SHRINK_QTY,BALANCE_QUANTITY,PENDING_QUANTITY,ISSUE_QUANTITY,NET_REC,SP_ID ,REF_ROW_ID )
+	SELECT A.ISSUE_ID,b.ROW_ID,
+	CONVERT(NUMERIC(10,2), 0) AS RECEIVE_QUNATITY,          
+	CONVERT(NUMERIC(10,2), 0) AS SHRINK_QTY,          
+	(B.QUANTITY - (ISNULL(REC.QUANTITY,0)+ISNULL(REC.SHRINK_QTY,0))) AS BALANCE_QUANTITY,        
+	(B.QUANTITY - (ISNULL(REC.QUANTITY,0)+ISNULL(REC.SHRINK_QTY,0))) AS PENDING_QUANTITY,             
+	B.QUANTITY AS ISSUE_QUANTITY ,       
+	CONVERT(NUMERIC(10,2), 0) AS NET_REC   ,@CSP_ID AS SP_ID ,B.ROW_ID  
+	FROM JOBWORK_ISSUE_DET B (NOLOCK)    
+	JOIN JOBWORK_ISSUE_MST A (NOLOCK) ON A.ISSUE_ID=B.ISSUE_ID    
+	--LEFT OUTER JOIN     
+	--(    
+	--	SELECT * FROM #TMPJWI_BOM    
+	--)X ON X.issue_id=A.issue_id    
+	LEFT OUTER JOIN             
+	(    
+		SELECT M.REF_ROW_ID,SUM(M.QUANTITY) AS QUANTITY  ,SUM(ISNULL(M.SHRINK_QTY,0)) AS SHRINK_QTY  
+		FROM JOBWORK_RECEIPT_DET M (NOLOCK)                             
+		JOIN JOBWORK_RECEIPT_MST N (NOLOCK) ON M.RECEIPT_ID = N.RECEIPT_ID             
+		WHERE N.CANCELLED = 0 AND N.AGENCY_CODE = @CWHERE     
+		AND (@NISSUE_MODE=1 OR (N.MODE=@NMODE AND N.WIP=@BWIP ))          
+		GROUP BY M.REF_ROW_ID    
+	) REC  ON REC.REF_ROW_ID =  B.ROW_ID      
+	WHERE A.CANCELLED = 0  
+	AND  A.AGENCY_CODE =@CWHERE  AND     
+	ISNULL(A.NON_RECEIVABLE,0)=0 AND         
+	(@NISSUE_MODE=1 OR (A.ISSUE_TYPE=@NMODE AND A.WIP=@BWIP ) )    
+	AND  ISNULL(A.ISSUE_MODE,0) =@NISSUE_MODE    
+	AND (B.QUANTITY - (ISNULL(REC.QUANTITY,0)+ISNULL(REC.SHRINK_QTY,0))) > 0       
+--	AND X.issue_id IS NULL    
+	AND   a.location_Code =@cLocID 
+	and(@CPRODUCT_CODE='' or  b.product_code =@CPRODUCT_CODE)
+	
+
+	LBLPASTE:
+
+	set @cerrmsg=''
+
+	IF @NPASTE =1
+	BEGIN
+
+		DELETE FROM JWR_BARCODE WHERE SP_ID=@CSP_ID
+		
+		   SET @DTSQL='   INSERT INTO JWR_BARCODE(ISSUE_ID,ROW_ID,RECEIVE_QUNATITY,SHRINK_QTY,BALANCE_QUANTITY,PENDING_QUANTITY,ISSUE_QUANTITY,NET_REC,SP_ID ,REF_ROW_ID )
+				SELECT A.ISSUE_ID,B.ROW_ID,
+				CONVERT(NUMERIC(10,2), 0) AS RECEIVE_QUNATITY,          
+				CONVERT(NUMERIC(10,2), 0)  AS SHRINK_QTY  ,
+				(B.QUANTITY - (ISNULL(REC.QUANTITY,0)+ISNULL(REC.SHRINK_QTY,0))) AS BALANCE_QUANTITY,        
+				(B.QUANTITY - (ISNULL(REC.QUANTITY,0)+ISNULL(REC.SHRINK_QTY,0))) AS PENDING_QUANTITY,             
+				B.QUANTITY AS ISSUE_QUANTITY ,       
+				CONVERT(NUMERIC(10,2), 0) AS NET_REC   ,'''+@CSP_ID+''' AS SP_ID ,B.ROW_ID  
+				FROM JOBWORK_ISSUE_DET B (NOLOCK)    
+				JOIN JOBWORK_ISSUE_MST A (NOLOCK) ON A.ISSUE_ID=B.ISSUE_ID 
+				JOIN '+@CTABLENAME+' TMP ON TMP.PRODUCT_CODE =B.PRODUCT_CODE
+				LEFT OUTER JOIN             
+				(    
+					SELECT M.REF_ROW_ID,SUM(M.QUANTITY) AS QUANTITY  ,SUM(ISNULL(M.SHRINK_QTY,0)) AS SHRINK_QTY  
+					FROM JOBWORK_RECEIPT_DET M (NOLOCK)                             
+					JOIN JOBWORK_RECEIPT_MST N (NOLOCK) ON M.RECEIPT_ID = N.RECEIPT_ID             
+					WHERE N.CANCELLED = 0 AND N.AGENCY_CODE = '''+@CWHERE+'''     
+					AND ('''+RTRIM(LTRIM(STR(@NISSUE_MODE)))+'''=1 OR (N.MODE='''+RTRIM(LTRIM(STR(@NMODE)))+''' AND N.WIP='''+RTRIM(LTRIM(STR(@BWIP)))+''' ))          
+					GROUP BY M.REF_ROW_ID    
+				) REC  ON REC.REF_ROW_ID =  B.ROW_ID      
+				WHERE A.CANCELLED = 0  
+				AND  A.AGENCY_CODE ='''+@CWHERE+'''  AND     
+				ISNULL(A.NON_RECEIVABLE,0)=0 AND         
+				('''+RTRIM(LTRIM(STR(@NISSUE_MODE)))+'''=1 OR (A.ISSUE_TYPE='''+RTRIM(LTRIM(STR(@NMODE)))+''' AND A.WIP='''+RTRIM(LTRIM(STR(@BWIP)))+''' ) )    
+				AND  ISNULL(A.ISSUE_MODE,0) ='''+RTRIM(LTRIM(STR(@NISSUE_MODE)))+'''    
+				AND (B.QUANTITY - (ISNULL(REC.QUANTITY,0)+ISNULL(REC.SHRINK_QTY,0))) > 0       
+				AND   a.location_code ='''+@CLOCID+''' '
+				PRINT @DTSQL
+				EXEC SP_EXECUTESQL @DTSQL
+
+				DECLARE @NTOTALQTY NUMERIC(10,3),@NPENDING_QTY NUMERIC(10,3)
+
+				SET @DTSQL='SELECT @NTOTALQTY=COUNT(*) FROM  '+@CTABLENAME+' '
+				EXEC SP_EXECUTESQL @DTSQL, N'@NTOTALQTY NUMERIC(10,3) OUTPUT',@NTOTALQTY=@NTOTALQTY OUTPUT
+
+			
+				IF  ISNULL(@NTOTALQTY,0)<>ISNULL(@NPENDING_QTY,0)
+				BEGIN
+			     
+					 SET @CERRMSG='MISMATCH TOTAL PASTE BARCODE -'+RTRIM(LTRIM(STR(@NTOTALQTY))) +' & PENDING BARCODE- '+RTRIM(LTRIM(STR(@NPENDING_QTY)))
+				END 
+
+	END
+
+
+	
+	 
+
+	SELECT (CAST(0 AS BIT)) AS CHKDELIVER ,
+	TMP.RECEIVE_QUNATITY,TMP.SHRINK_QTY, TMP.BALANCE_QUANTITY,        
+	TMP.PENDING_QUANTITY, TMP.ISSUE_QUANTITY,B.ROW_ID AS REF_ROW_ID,BI.BIN_NAME,      
+	(CONVERT(NUMERIC(10,2), ISNULL(TMP.RECEIVE_QUNATITY,0))*B.JOB_RATE) AS AMOUNT,  
+	
+	b.product_code,b.quantity,b.job_rate,b.remarks,b.dept_id,b.company_code,  
+	 CAST('LATER'+CAST(NEWID() AS VARCHAR(40)) AS VARCHAR(40)) row_id
+	,b.LAST_UPDATE,b.issue_id,b.no_hrs,b.job_code,b.due_dt,b.BIN_ID,b.WIP_UID,b.PREV_JOB_CODE,b.PREV_JOB_RATE
+	,b.ref_no,b.design_code,b.hsn_code,b.gst_percentage,b.igst_amount,b.cgst_amount,b.sgst_amount,b.xn_value_without_gst
+	,b.xn_value_with_gst,b.PURCHASE_PRICE,b.CESS_AMOUNT,b.Gst_Cess_Percentage,b.Gst_Cess_Amount,b.ts ,
+	
+	F.JOB_NAME, A.ISSUE_NO , A.ISSUE_DT,  TMP.NET_REC,                        
+	SKU_names.ARTICLE_NO, SKU_names.ARTICLE_NAME, PARA1_NAME,PARA2_NAME,PARA3_NAME,'PCS' AS UOM_NAME,                 
+	CONVERT(NUMERIC(10,2),0) AS QUANTITY_IN_STOCK,SKU_names.pp as PURCHASE_PRICE,            
+	  SKU_names.SECTION_NAME, SKU_names.SUB_SECTION_NAME,                    
+	PARA4_NAME,PARA5_NAME,PARA6_NAME,             
+	ISNULL(SKU_NAMES.STOCK_NA,0) AS STOCK_NA,D.AGENCY_NAME,D.AGENCY_CODE,F1.JOB_NAME AS PREV_JOB_NAME,    
+	B.PREV_JOB_CODE   ,B.REMARKS AS [ISSUE_REMARKS],    
+	'' AS BILL_NO                              
+	,X.BUYER_ORDER_ID,X.BUYER_ORDER_NO,X.BUYER_ORDER_DT,X.BUYER_ORDER_REF_NO    
+	,X.JOB_CARD_ID,X.JOB_CARD_NO,'' AS JOB_CARD_ID    
+	,B.MERCHANT_NAME,B.BUYER_NAME    
+	 ,  dm.design_no  ,CODING_SCHEME,@CSP_ID AS SP_ID ,B.ROW_ID AS ISSUE_ROW_ID,@CERRMSG AS ERRMSG  ,JW_PMT.Trading_Product_code  As Trading_product_code,
+	 cast(b.xn_value_with_gst /b.quantity as numeric(14,2)) as JWR_XN_RATE_WITH_GST  
+	FROM JWR_barcode TMP (NOLOCK)                             
+	JOIN JOBWORK_ISSUE_MST A (NOLOCK) ON A.ISSUE_ID = TMP.ISSUE_ID    AND a.location_Code =@cLocID                                     
+	JOIN JOBWORK_ISSUE_DET B (NOLOCK) ON TMP.REF_ROW_ID = B.ROW_ID                                       
+	JOIN SKU_NAMES (NOLOCK) ON SKU_NAMES.PRODUCT_CODE=B.PRODUCT_CODE    
+	JOIN ARTICLE ART (NOLOCK) ON SKU_NAMES.article_no = ART.article_no 
+	JOIN JOBS F (NOLOCK) ON F.JOB_CODE = B.JOB_CODE     
+	JOIN JOBS F1 (NOLOCK) ON F1.JOB_CODE = B.PREV_JOB_CODE                       
+	JOIN PRD_AGENCY_MST D (NOLOCK) ON A.AGENCY_CODE = D.AGENCY_CODE        
+	JOIN BIN BI (NOLOCK) ON BI.BIN_ID=B.BIN_ID   
+	left outer JOIN designm dm (NOLOCK) ON B.design_code =dm.design_code 
+	LEFT OUTER JOIN jobwork_pmt JW_PMT (NOLOCK) ON JW_PMT.product_code=B.PRODUCT_CODE      
+	LEFT OUTER JOIN employee EMP (NOLOCK) ON EMP.emp_code=JW_PMT.ITEM_MERCHANT_CODE   
+	LEFT OUTER JOIN    
+	(    
+		SELECT A1.ISSUE_NO,A1.ISSUE_DT,A1.ISSUE_ID , A3.AC_CODE,   
+		A3.ORDER_ID AS BUYER_ORDER_ID,A3.ORDER_NO AS BUYER_ORDER_NO,A3.ORDER_DT AS BUYER_ORDER_DT,A3.REF_NO AS BUYER_ORDER_REF_NO    
+		,BMST.MEMO_ID AS JOB_CARD_ID,BMST.MEMO_NO AS JOB_CARD_NO ,a.row_id    
+		FROM JOBWORK_ISSUE_MST A1    
+		JOIN JOBWORK_ISSUE_DET A ON A.ISSUE_ID=A1.ISSUE_ID      
+		LEFT JOIN ORD_PLAN_BARCODE_DET BAR_DET (NOLOCK) ON BAR_DET.PRODUCT_CODE=A.PRODUCT_CODE  --AND A.WIP_UID = BAR_DET.REFROW_ID    
+		LEFT JOIN ORD_PLAN_DET BDET (NOLOCK) ON BDET.ROW_ID=BAR_DET.REFROW_ID    
+		LEFT JOIN ORD_PLAN_MST BMST (NOLOCK) ON BDET.MEMO_ID=BMST.MEMO_ID    
+		LEFT JOIN BUYER_ORDER_DET A11 ON BDET.WOD_ROW_ID=A11.ROW_ID    
+		LEFT JOIN  BUYER_ORDER_MST A3 ON A11.ORDER_ID=A3.ORDER_ID    
+		WHERE   a1.location_Code =@cLocID--B.RECEIPT_ID=@CWHERE    
+		and isnull(BMST.CANCELLED ,0)=0
+		GROUP BY A1.ISSUE_NO,A1.ISSUE_DT,A1.ISSUE_ID ,A3.ORDER_ID,A3.ORDER_NO,A3.ORDER_DT,
+		A3.REF_NO,BMST.MEMO_ID ,BMST.MEMO_NO , A3.AC_CODE  ,a.row_id   
+	)X ON X.ISSUE_ID=TMP.ISSUE_ID    and b.row_id =x.row_id 
+	where tmp.sp_id =@CSP_ID
+
+	 GOTO END_PROC
+	--CREATE INDEX IND_TMPJWI ON #TMPJWI (ROW_ID,ISSUE_ID)    
+    
+	LBLBARCODEDET:   
+	                       
+	SELECT (CAST(0 AS BIT)) AS CHKDELIVER ,
+	TMP.RECEIVE_QUNATITY,TMP.SHRINK_QTY, TMP.BALANCE_QUANTITY,        
+	TMP.PENDING_QUANTITY, TMP.ISSUE_QUANTITY,B.ROW_ID AS REF_ROW_ID,BI.BIN_NAME,      
+	(CONVERT(NUMERIC(10,2), ISNULL(TMP.RECEIVE_QUNATITY,0))*B.JOB_RATE) AS AMOUNT,          
+	b.product_code,b.quantity,b.job_rate,b.remarks,b.dept_id,b.company_code,
+	CAST('LATER'+CAST(NEWID() AS VARCHAR(40)) AS VARCHAR(40)) row_id
+	--CAST('LATER'+CAST(NEWID() AS VARCHAR(40)) AS VARCHAR(40)) row_id
+	,b.LAST_UPDATE,b.issue_id,b.no_hrs,b.job_code,b.due_dt,b.BIN_ID,b.WIP_UID,b.PREV_JOB_CODE,b.PREV_JOB_RATE
+	,b.ref_no,b.design_code,b.hsn_code,b.gst_percentage,b.igst_amount,b.cgst_amount,b.sgst_amount,b.xn_value_without_gst
+	,b.xn_value_with_gst,b.PURCHASE_PRICE,b.CESS_AMOUNT,b.Gst_Cess_Percentage,b.Gst_Cess_Amount,b.ts ,
+	
+	F.JOB_NAME, A.ISSUE_NO , A.ISSUE_DT,  TMP.NET_REC,                        
+	SKU_names.ARTICLE_NO, SKU_names.ARTICLE_NAME, PARA1_NAME,PARA2_NAME,PARA3_NAME,'PCS' AS UOM_NAME,                 
+	CONVERT(NUMERIC(10,2),0) AS QUANTITY_IN_STOCK,SKU_names.pp as PURCHASE_PRICE,            
+	SKU_names.MRP,SKU_names.WS_PRICE,   SKU_names.SECTION_NAME, SKU_names.SUB_SECTION_NAME,                    
+	PARA4_NAME,PARA5_NAME,PARA6_NAME,             
+	ISNULL(SKU_NAMES.STOCK_NA,0) AS STOCK_NA,D.AGENCY_NAME,D.AGENCY_CODE,F1.JOB_NAME AS PREV_JOB_NAME,    
+	B.PREV_JOB_CODE   ,B.REMARKS AS [ISSUE_REMARKS],    
+	'' AS BILL_NO                              
+	,X.BUYER_ORDER_ID,X.BUYER_ORDER_NO,X.BUYER_ORDER_DT,X.BUYER_ORDER_REF_NO    
+	,X.JOB_CARD_ID,X.JOB_CARD_NO,'' AS JOB_CARD_ID    
+	,B.MERCHANT_NAME,B.BUYER_NAME    
+	,AT1.attr1_key_name,AT2.attr2_key_name,AT3.attr3_key_name,AT4.attr4_key_name,AT5.attr5_key_name,AT6.attr6_key_name,    
+	AT7.attr7_key_name,AT8.attr8_key_name,AT9.attr9_key_name,AT10.attr10_key_name,AT11.attr11_key_name,AT12.attr12_key_name,    
+	AT13.attr13_key_name,AT14.attr14_key_name,AT15.attr15_key_name,AT16.attr16_key_name,AT17.attr17_key_name,AT18.attr18_key_name,    
+	AT19.attr19_key_name,AT20.attr20_key_name,AT21.attr21_key_name,AT22.attr22_key_name,AT23.attr23_key_name,AT24.attr24_key_name,    
+	AT25.attr25_key_name  ,  dm.design_no  ,CODING_SCHEME,@CSP_ID AS SP_ID   ,@cTradingPc As Trading_product_code,
+	cast(b.xn_value_with_gst /b.quantity as numeric(14,2)) as JWR_XN_RATE_WITH_GST  
+	FROM JWR_barcode TMP (NOLOCK)                                                          
+	JOIN JOBWORK_ISSUE_DET B (NOLOCK) ON TMP.REF_ROW_ID = B.ROW_ID          
+	JOIN JOBWORK_ISSUE_MST A (NOLOCK) ON A.ISSUE_ID = b.ISSUE_ID    AND a.location_Code =@cLocID                                     
+	JOIN SKU_NAMES (NOLOCK) ON SKU_NAMES.PRODUCT_CODE=B.PRODUCT_CODE    
+	JOIN ARTICLE ART (NOLOCK) ON SKU_NAMES.article_no = ART.article_no                         
+	JOIN JOBS F (NOLOCK) ON F.JOB_CODE = B.JOB_CODE     
+	JOIN JOBS F1 (NOLOCK) ON F1.JOB_CODE = B.PREV_JOB_CODE                       
+	JOIN PRD_AGENCY_MST D (NOLOCK) ON A.AGENCY_CODE = D.AGENCY_CODE        
+	JOIN BIN BI (NOLOCK) ON BI.BIN_ID=B.BIN_ID   
+	left outer JOIN designm dm (NOLOCK) ON B.design_code =dm.design_code        
+	LEFT OUTER JOIN    
+	(    
+		SELECT A1.ISSUE_NO,A1.ISSUE_DT,A1.ISSUE_ID , A3.AC_CODE,   
+		A3.ORDER_ID AS BUYER_ORDER_ID,A3.ORDER_NO AS BUYER_ORDER_NO,A3.ORDER_DT AS BUYER_ORDER_DT,A3.REF_NO AS BUYER_ORDER_REF_NO    
+		,BMST.MEMO_ID AS JOB_CARD_ID,BMST.MEMO_NO AS JOB_CARD_NO ,a.row_id    
+		FROM JOBWORK_ISSUE_MST A1    
+		JOIN JOBWORK_ISSUE_DET A ON A.ISSUE_ID=A1.ISSUE_ID      
+		LEFT JOIN ORD_PLAN_BARCODE_DET BAR_DET (NOLOCK) ON BAR_DET.PRODUCT_CODE=A.PRODUCT_CODE  --AND A.WIP_UID = BAR_DET.REFROW_ID    
+		LEFT JOIN ORD_PLAN_DET BDET (NOLOCK) ON BDET.ROW_ID=BAR_DET.REFROW_ID    
+		LEFT JOIN ORD_PLAN_MST BMST (NOLOCK) ON BDET.MEMO_ID=BMST.MEMO_ID    
+		LEFT JOIN BUYER_ORDER_DET A11 ON BDET.WOD_ROW_ID=A11.ROW_ID    
+		LEFT JOIN  BUYER_ORDER_MST A3 ON A11.ORDER_ID=A3.ORDER_ID    
+		WHERE   a1.location_Code=@cLocID--B.RECEIPT_ID=@CWHERE    
+		and isnull(BMST.CANCELLED ,0)=0
+		GROUP BY A1.ISSUE_NO,A1.ISSUE_DT,A1.ISSUE_ID ,A3.ORDER_ID,A3.ORDER_NO,A3.ORDER_DT,
+		A3.REF_NO,BMST.MEMO_ID ,BMST.MEMO_NO , A3.AC_CODE  ,a.row_id   
+	)X ON X.ISSUE_ID=TMP.ISSUE_ID    and b.row_id =x.row_id 
+	LEFT OUTER JOIN jobwork_pmt JW_PMT (NOLOCK) ON JW_PMT.product_code=B.PRODUCT_CODE      
+	LEFT OUTER JOIN employee EMP (NOLOCK) ON EMP.emp_code=JW_PMT.ITEM_MERCHANT_CODE    
+	LEFT OUTER JOIN BUYER_ORDER_MST BOMST (NOLOCK) ON BOMST.ORDER_ID=JW_PMT.ORDER_ID    
+	LEFT OUTER JOIN lm01106 lm (NOLOCK) ON lm.AC_Code=ISNULL(BOMST.ac_code ,X.ac_code )   
+	LEFT OUTER JOIN article_fix_attr ATTR  (NOLOCK) ON ART.article_code = ATTR.ARTICLE_CODE     
+	LEFT OUTER JOIN attr1_mst at1 (NOLOCK) ON at1.attr1_key_code=ATTR.attr1_key_code    
+	LEFT OUTER JOIN attr2_mst at2 (NOLOCK) ON at2.attr2_key_code=ATTR.attr2_key_code    
+	LEFT OUTER JOIN attr3_mst at3 (NOLOCK) ON at3.attr3_key_code=ATTR.attr3_key_code    
+	LEFT OUTER JOIN attr4_mst at4 (NOLOCK) ON at4.attr4_key_code=ATTR.attr4_key_code    
+	LEFT OUTER JOIN attr5_mst at5 (NOLOCK) ON at5.attr5_key_code=ATTR.attr5_key_code    
+	LEFT OUTER JOIN attr6_mst at6 (NOLOCK) ON at6.attr6_key_code=ATTR.attr6_key_code    
+	LEFT OUTER JOIN attr7_mst at7 (NOLOCK) ON at7.attr7_key_code=ATTR.attr7_key_code    
+	LEFT OUTER JOIN attr8_mst at8 (NOLOCK) ON at8.attr8_key_code=ATTR.attr8_key_code    
+	LEFT OUTER JOIN attr9_mst at9 (NOLOCK) ON at9.attr9_key_code=ATTR.attr9_key_code    
+	LEFT OUTER JOIN attr10_mst at10 (NOLOCK) ON at10.attr10_key_code=ATTR.attr10_key_code    
+	LEFT OUTER JOIN attr11_mst at11 (NOLOCK) ON at11.attr11_key_code=ATTR.attr11_key_code    
+	LEFT OUTER JOIN attr12_mst at12 (NOLOCK) ON at12.attr12_key_code=ATTR.attr12_key_code    
+	LEFT OUTER JOIN attr13_mst at13 (NOLOCK) ON at13.attr13_key_code=ATTR.attr13_key_code    
+	LEFT OUTER JOIN attr14_mst at14 (NOLOCK) ON at14.attr14_key_code=ATTR.attr14_key_code    
+	LEFT OUTER JOIN attr15_mst at15 (NOLOCK) ON at15.attr15_key_code=ATTR.attr15_key_code    
+	LEFT OUTER JOIN attr16_mst at16 (NOLOCK) ON at16.attr16_key_code=ATTR.attr16_key_code    
+	LEFT OUTER JOIN attr17_mst at17 (NOLOCK) ON at17.attr17_key_code=ATTR.attr17_key_code    
+	LEFT OUTER JOIN attr18_mst at18 (NOLOCK) ON at18.attr18_key_code=ATTR.attr18_key_code    
+	LEFT OUTER JOIN attr19_mst at19 (NOLOCK) ON at19.attr19_key_code=ATTR.attr19_key_code    
+	LEFT OUTER JOIN attr20_mst at20 (NOLOCK) ON at20.attr20_key_code=ATTR.attr20_key_code    
+	LEFT OUTER JOIN attr21_mst at21 (NOLOCK) ON at21.attr21_key_code=ATTR.attr21_key_code    
+	LEFT OUTER JOIN attr22_mst at22 (NOLOCK) ON at22.attr22_key_code=ATTR.attr22_key_code    
+	LEFT OUTER JOIN attr23_mst at23 (NOLOCK) ON at23.attr23_key_code=ATTR.attr23_key_code    
+	LEFT OUTER JOIN attr24_mst at24 (NOLOCK) ON at24.attr24_key_code=ATTR.attr24_key_code    
+	LEFT OUTER JOIN attr25_mst at25(NOLOCK) ON at25.attr25_key_code=ATTR.attr25_key_code    
+	WHERE TMP.SP_ID =@CSP_ID
+	ORDER BY    sku_names.PRODUCT_CODE, A.ISSUE_DT 
+
+	GOTO END_PROC
+
+	
+
+	END_PROC:
+	DELETE FROM JWR_barcode WHERE SP_ID =@CSP_ID
+
+END 
+
+
+
+

@@ -1,0 +1,72 @@
+create PROCEDURE SP_BOX_FILTER
+(  
+@NENTRY_MODE NUMERIC(1),            --@NINV_MODE:0 FOR ALL,1 FOR DIRECT,2 FOR BOX  
+@DPS_FROMDATE DATETIME,    /* @DFROMDATE:2013-04-20 FOR FILTER FROM DATE */  
+@DPS_TODATE DATETIME,     /* @DTODATE:2014-08-05 FOR FILTER TO DATE */  
+@NCANCELLED NUMERIC(1),           /* @NCANCELLED:0 OR 1 CHECK CANCLE STATUS */              
+@LOC VARCHAR(4)=''  ,
+@CPRODUCTCODE VARCHAR(100)='',
+@CARTICLECODE VARCHAR(100)=''
+)  
+AS    
+BEGIN    
+--(dinkar) Replace  left(memoid,2) to Location_code 
+
+     dECLARE @cCmd nvaRCHaR(MAx)
+	 
+	 if ObJeCt_ID('tempdb..#TBLINV','u') is Not Null
+		dROP taBle #TBLINV
+	
+	 cREatE TABLe #TBLINV (memo_id varchar(40),box_id varchar(40),box_no varchar(20),box_dt datetime,
+	 CANCELLED varchar(50),ENTRY_MODE numeric(1,0),
+	 REMARKS varchar(300),FIN_YEAR varchar(5))
+
+	 if ObJeCt_ID('tempdb..#TBLINVDET','u') is Not Null
+		dROP taBle #TBLINVDET
+	
+	 cREatE TABLe #TBLINVDET (memo_id varchar(40))
+
+	  if ISNULL(@CPRODUCTCODE,'')<>''
+	  BEGIN
+		INSERT INTO  #TBLINVDET (memo_id)
+		SELECT DISTINCT a.BOX_ID FROM BOXD A (NOLOCK)
+		JOIN sku B (NOLOCK) ON B.PRODUCT_CODE=A.PRODUCT_CODE
+		WHERE B.product_code=ISNULL(@CPRODUCTCODE,'') AND B.product_code<>''
+	  END
+		
+	  if ISNULL(@CARTICLECODE,'')<>''
+	  BEGIN
+		INSERT INTO  #TBLINVDET (memo_id)
+		SELECT DISTINCT a.BOX_ID FROM BOXD A (NOLOCK)
+		JOIN sku B (NOLOCK) ON B.PRODUCT_CODE=A.PRODUCT_CODE
+		WHERE B.article_code=ISNULL(@CARTICLECODE,'') AND B.article_code<>''
+	  END
+	  	
+		IF NOT EXISTS(SELECT TOP 1 MEMO_ID FROM  #TBLINVDET)
+		BEGIN
+		INSERT INTO  #TBLINVDET (memo_id)
+		SELECT DISTINCT T1.BOX_ID
+		FROM BOXM T1 (NOLOCK)      
+		WHERE T1.BOX_DT  BETWEEN  @DPS_FROMDATE AND @DPS_TODATE 
+		END
+
+	 SEt @cCmd=N'SELECT DISTINCT T1.BOX_ID AS MEMO_ID,  T1.BOX_ID,T1.BOX_NO,T1.BOX_DT,T1.CANCELLED, T1.ENTRY_MODE,
+	 T1.REMARKS,T1.FIN_YEAR 
+	 FROM BOXM T1 (NOLOCK)   
+	 JOIN #TBLINVDET T2 ON T2.MEMO_ID=T1.BOX_ID
+	 WHERE '+(CAse WHen @NENTRY_MODE=0 theN '1=1' elSe 'T1.ENTRY_MODE='+sTr(@NENTRY_MODE) End)+'     
+	 AND (T1.BOX_DT  BETWEEN  '''+cONvErt(varchar,@DPS_FROMDATE,110)+''' AND '''+convERT(VarchAR,@DPS_TODATE,110)+''')  
+	 AND '+(case when @LOC='' then '1=1' ELse 'T1.location_code='''+@LOC+'''' End)+
+	 ' AND '+(case when @NCANCELLED=2 THEN '1=1' ELse 'T1.CANCELLED='+Str(@NCANCELLED) EnD)
+	
+	 print @cCmd
+
+	 iNsErT #TBLINV (memo_id,box_id,box_no,box_dt,CANCELLED,ENTRY_MODE,REMARKS,FIN_YEAR )
+	 exec sp_executesql @cCmd
+
+    SELECT CAST(0 AS BIT) AS CHECKED ,MEMO_ID,  box_id,box_no,box_dt,
+ 	 (CASE WHEN CANCELLED ='1' THEN 'CANCELLED' ELSE '' END) AS CANCELLED,  
+	 (CASE WHEN ENTRY_MODE =1 THEN 'BOX' ELSE 'SET' END) AS  ENTRY_MODE,   
+	  REMARKS, FIN_YEAR 
+	 from #TBLINV  
+END 

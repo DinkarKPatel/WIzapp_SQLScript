@@ -1,0 +1,185 @@
+CREATE PROCEDURE SP3S_STKRECON_BARCODE_DETAILS      
+ (      
+   @CDEPT_ID VARCHAR(5),      
+   @CREPID VARCHAR(20)='',      
+   @CSPID VARCHAR(50) ,  
+   @bpaste bit=0,
+   @CBIN_ID VARCHAR(7)=''  
+ )      
+ AS      
+ BEGIN      
+      
+  DECLARE @CERRORMSG VARCHAR(100),@binsertpmt bit,@cBarCodeSeparator VARCHAR(4)      
+      
+ BEGIN TRY      
+    SET @BINSERTPMT=0 
+    
+    
+  select PRODUCT_CODE, dept_id,BIN_ID,quantity_in_stock,cast(0 as numeric(5,0)) as Sr,rep_id ,
+         CAST(0 AS NUMERIC(14,2)) AS MRP
+        into #TMPPMT01106   
+  from pmt01106 where 1=2       
+  
+            
+  IF EXISTS (SELECT TOP 1 'U' FROM IMPORT_BARCODE_UPLOAD A (NOLOCK)      
+     LEFT JOIN SKU B (nolock) ON A.PRODUCT_CODE =B.PRODUCT_CODE       
+  WHERE SP_ID=@CSPID  AND B.product_code IS NULL)      
+  BEGIN      
+              
+     update a set  ERRMSG='Barcode not found'      
+     from IMPORT_BARCODE_UPLOAD A (NOLOCK)      
+        LEFT JOIN SKU B (nolock) ON A.PRODUCT_CODE =B.PRODUCT_CODE       
+        WHERE SP_ID=@CSPID  AND B.product_code IS NULL      
+     SET @CERRORMSG='Barcode not found'      
+     GOTO END_PROC      
+  END      
+  
+  
+  
+  if @CBIN_ID=''
+     set @CBIN_ID=null
+      
+ IF @BPASTE=0  
+ BEGIN  
+ 
+		   INSERT INTO #TMPPMT01106(PRODUCT_CODE,DEPT_ID,BIN_ID,QUANTITY_IN_STOCK,SR,REP_ID,MRP )
+		   SELECT a.PRODUCT_CODE,isnull(C.DEPT_ID,@CDEPT_ID) ,isnull(C.BIN_ID,'000') ,
+		          sum(isnull(C.STOCK_RECO_QUANTITY_IN_STOCK,0) -isnull(PhysicalScanQty,0) ) as  QUANTITY_IN_STOCK,0 AS SR,C.REP_ID,B.MRP  
+		   FROM IMPORT_BARCODE_UPLOAD A (NOLOCK)  
+		   JOIN SKU_NAMES B (NOLOCK) ON A.PRODUCT_CODE =LEFT(b.PRODUCT_CODE, ISNULL(NULLIF(CHARINDEX ('@',b.PRODUCT_CODE)-1,-1),LEN(b.PRODUCT_CODE )))
+		   JOIN PMT01106 C (NOLOCK) ON B.PRODUCT_CODE=C.PRODUCT_CODE     AND C.REP_ID=@CREPID AND C.DEPT_ID=@CDEPT_ID  
+		   AND C.BIN_ID =ISNULL(@CBIN_ID,C.BIN_ID )  
+		   WHERE   A.SP_ID=@CSPID   
+		   group by a.PRODUCT_CODE,C.DEPT_ID ,C.BIN_ID,C.REP_ID,B.MRP  
+		   
+  
+ END  
+ Else  
+ begin
+
+	   ;WITH CTE AS      
+	  (      
+		 SELECT B.PRODUCT_CODE AS PRODUCT_CODE,      
+			   A.DEPT_ID ,A.BIN_ID ,SUM(isnull(STOCK_RECO_QUANTITY_IN_STOCK,0) -isnull(PhysicalScanQty,0) ) AS QUANTITY_IN_STOCK,      
+		 SR=ROW_NUMBER () OVER (PARTITION BY B.PRODUCT_CODE ORDER BY  SUM(isnull(STOCK_RECO_QUANTITY_IN_STOCK,0) -isnull(PhysicalScanQty,0) )  DESC) ,a.rep_id ,c.mrp     
+		FROM IMPORT_BARCODE_UPLOAD  b (NOLOCK)      
+		JOIN PMT01106 a (NOLOCK) ON B.PRODUCT_CODE=LEFT(A.PRODUCT_CODE, ISNULL(NULLIF(CHARINDEX ('@',A.PRODUCT_CODE)-1,-1),LEN(A.PRODUCT_CODE )))      
+			   AND a.rep_id=@CREPID and A.DEPT_ID=@CDEPT_ID  AND a.BIN_ID =ISNULL(@CBIN_ID,a.BIN_ID )
+	    join sku_names c on a.product_code =c.product_code
+		WHERE  B.SP_ID =@CSPID     
+		GROUP BY B.PRODUCT_CODE ,A.DEPT_ID ,A.BIN_ID,a.rep_id  ,c.mrp      
+		)    
+		insert into #TMPPMT01106(PRODUCT_CODE,DEPT_ID,BIN_ID,QUANTITY_IN_STOCK,SR,rep_id,MRP )   
+		SELECT PRODUCT_CODE,DEPT_ID,BIN_ID,QUANTITY_IN_STOCK,SR,rep_id,mrp  FROM CTE 
+		
+		
+		
+		IF EXISTS (SELECT TOP 1 'U' FROM #TMPPMT01106 WHERE sr >1)
+		begin
+		     
+		       UPDATE A SET  ERRMSG='MULTIPLE BIN/MRP ITEM DISALLOW IN PASTE BARCODE'      
+			   FROM IMPORT_BARCODE_UPLOAD A (NOLOCK)   
+			   JOIN #TMPPMT01106 B ON A.PRODUCT_CODE =B.PRODUCT_CODE    
+			   WHERE SP_ID=@CSPID  AND B.SR>1
+			    
+              SET @CERRORMSG='MULTIPLE BIN/MRP  ITEM DISALLOW IN PASTE BARCODE'    
+     
+		end
+	    
+      
+ end  
+  
+  
+  
+        
+  IF not  EXISTS (SELECT TOP 1 'U' FROM #TMPPMT01106 A with  (NOLOCK) ) and @bpaste =0     
+  begin      
+    print 'INSERTPMT'      
+      
+     update a set  ERRMSG='INSERTPMT'      
+     from IMPORT_BARCODE_UPLOAD A (NOLOCK)      
+     LEFT JOIN pmt01106 B (nolock) ON A.PRODUCT_CODE =LEFT(b.PRODUCT_CODE, ISNULL(NULLIF(CHARINDEX ('@',b.PRODUCT_CODE)-1,-1),LEN(b.PRODUCT_CODE )))      
+     and b.dept_id = @CDEPT_ID AND b.rep_id=@CREPID      
+     WHERE SP_ID=@CSPID  AND B.product_code IS NULL      
+      
+     SET @CERRORMSG='INSERTPMT'      
+           
+   end     
+   
+   if @BPASTE=1
+   begin
+      
+		 UPDATE A SET  ERRMSG='INSERTPMT'        
+		 FROM IMPORT_BARCODE_UPLOAD A (NOLOCK)        
+		 LEFT JOIN #TMPPMT01106 B (NOLOCK) ON A.PRODUCT_CODE =b.PRODUCT_CODE
+		 AND B.DEPT_ID = b.DEPT_ID  AND B.REP_ID=@CREPID        
+		 WHERE SP_ID=@CSPID  AND B.PRODUCT_CODE IS NULL   
+
+	 IF EXISTS (SELECT TOP 1 'U' FROM IMPORT_BARCODE_UPLOAD  (NOLOCK) WHERE ERRMSG<>'' AND SP_ID=@CSPID)
+        SET @CERRORMSG='INSERTPMT'       
+
+   end
+
+    
+        
+     
+    if ISNULL(@CERRORMSG,'')=''    
+    begin    
+       UPDATE A SET QUANTITY=1  FROM IMPORT_BARCODE_UPLOAD A (NOLOCK)  WHERE SP_ID=@CSPID AND ISNULL(QUANTITY,0)=0     
+    
+
+      
+	   SELECT  A.PRODUCT_CODE, ISNULL(PMT.DEPT_ID,@CDEPT_ID) AS DEPT_ID,ISNULL(PMT.QUANTITY_IN_STOCK,0) AS QUANTITY_IN_STOCK, 0 AS PHYSICAL_QTY,    
+		 0 AS EXCESS_QTY, B.ARTICLE_NO, B.SN_BARCODE_CODING_SCHEME CODING_SCHEME,b.SN_Uom_type AS DISCON, B.PARA1_NAME, B.PARA2_NAME,     
+		 CAST('' AS CHAR(7)) AS LOT_NO,    
+		 (CASE WHEN b.SN_Uom_type=2 AND @BPASTE=0 THEN QUANTITY_IN_STOCK ELSE QUANTITY END) AS QUANTITY,     
+		 CAST(0 AS NUMERIC)AS RETAINED , B.PARA3_NAME,isnull(pmt.MRP,b.mrp) as MRP,     
+		 B.SECTION_NAME,B.SUB_SECTION_NAME ,B.PARA4_NAME,B.PARA5_NAME,B.PARA6_NAME,    
+		 B.WS_PRICE, B.PP PURCHASE_PRICE, B.UOM AS UOM_NAME,PMT.BIN_ID ,
+		 @BINSERTPMT AS INSERTPMT, BIN.BIN_NAME  
+	   FROM IMPORT_BARCODE_UPLOAD A (NOLOCK)    
+	   JOIN SKU_NAMES B (NOLOCK) ON A.PRODUCT_CODE = B.PRODUCT_CODE     
+	   JOIN
+	   (
+	     select dept_id,bin_id,MRP, product_code ,sum(QUANTITY_IN_STOCK) as QUANTITY_IN_STOCK
+		 from #TMPPMT01106
+		 group by dept_id,bin_id,product_code,MRP
+	   )  PMT ON A.PRODUCT_CODE=PMT.PRODUCT_CODE  
+	   Join BIN (nolock) on BIN.BIN_ID= pmt.BIN_ID 
+	   WHERE A.SP_ID =@CSPID    
+	   ORDER BY ISNULL(PMT.QUANTITY_IN_STOCK,0) DESC    
+	   
+	  
+        
+  end    
+      
+    
+      
+END TRY      
+BEGIN CATCH      
+     SET @CERRORMSG = ' Error in Procedure SP3S_STKRECON_BARCODE_DETAILS SQL ERROR: #' + LTRIM(RTRIM(ERROR_NUMBER())) + ' ' + ERROR_MESSAGE()      
+END CATCH      
+      
+END_PROC:      
+          
+ IF  ISNULL(@CERRORMSG,'')<>''       
+ begin      
+          
+    IF EXISTS (SELECT TOP 1 'U' FROM IMPORT_BARCODE_UPLOAD A (NOLOCK) WHERE ERRMSG <>'' AND SP_ID =@CSPID)      
+    BEGIN      
+         SELECT DISTINCT  A.PRODUCT_CODE,ERRMSG,QUANTITY,B.MRP  FROM IMPORT_BARCODE_UPLOAD A (NOLOCK) 
+         LEFT JOIN #TMPPMT01106 B ON A.PRODUCT_CODE =B.PRODUCT_CODE 
+         WHERE ERRMSG <>'' AND SP_ID =@CSPID     
+         ORDER BY A.PRODUCT_CODE 
+      
+    END      
+      
+      
+ end      
+      
+      
+  DELETE a  FROM IMPORT_BARCODE_UPLOAD a with (nolock)  WHERE SP_ID=@CSPID      
+       
+      
+      
+END      

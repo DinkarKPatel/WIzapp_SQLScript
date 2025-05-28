@@ -1,0 +1,7 @@
+
+IF EXISTS (SELECT COLUMN_NAME from INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='DOCWSL_PARCEL_DET_MIRROR' AND COLUMN_NAME='unq_docwsl_parcel_det')
+  alter table DOCWSL_PARCEL_DET_MIRROR drop column unq_docwsl_parcel_det
+
+  
+
+    

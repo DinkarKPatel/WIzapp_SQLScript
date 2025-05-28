@@ -1,0 +1,1 @@
+--Discarded this trigger ..No one should delete this file as it will drop the trigger automatically at client end if we keep this file

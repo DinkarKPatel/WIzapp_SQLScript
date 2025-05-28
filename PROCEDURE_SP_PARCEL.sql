@@ -1,0 +1,640 @@
+CREATE PROCEDURE SP_PARCEL    
+ @NQUERYID NUMERIC (3,0) ,      
+ @CMEMOID VARCHAR(40) = '',      
+ @CWHERE1 VARCHAR(500) = '',      
+ @NNAVMODE NUMERIC(1,0) = 0,      
+ @CWHERE2 NVARCHAR(MAX)='',    
+ @RETURN NUMERIC(1,0) = 0,
+ @CXNTYPE VARCHAR(10) = '',
+ @nXN_ITEM_TYPE NUMERIC(2)=0
+ 
+--WITH ENCRYPTION
+
+AS      
+BEGIN    
+
+
+      
+  DECLARE @CCMD NVARCHAR(MAX),@cFilter VARCHAR(200)      
+      
+  IF		@NQUERYID = 1	GOTO LBLNAVIGATE        
+  ELSE IF   @NQUERYID = 2   GOTO LBLPARCELMST       
+  ELSE IF	@NQUERYID =	3	GOTO LBLPARCELDET 
+  ELSE IF	@NQUERYID = 4	GOTO LBLPARTYLIST    
+  ELSE IF	@NQUERYID = 5	GOTO LBLTRANSPORTLIST
+  ELSE IF	@NQUERYID = 6	GOTO LBLUOM
+  ELSE IF	@NQUERYID =	7	GOTO LBLAUNGDIADETAILS
+  ELSE IF	@NQUERYID =	8	GOTO LBLPARCELBILLS
+  ELSE IF	@NQUERYID = 9	GOTO LBLASN
+  ELSE IF	@NQUERYID = 10  GOTO LBLPO
+  ELSE IF	@NQUERYID = 11  GOTO LBLGRN
+  ELSE IF	@NQUERYID = 12  GOTO LBLREF_TYPE
+  ELSE IF	@NQUERYID = 13  GOTO LBLLIST_ASN_PO
+  ELSE IF	@NQUERYID = 14	GOTO LBLFETCHDOCDETAILS    
+  ELSE IF	@NQUERYID = 15	GOTO LBLPENDINGOUTWARDMEMOS
+  ELSE IF	@NQUERYID = 16	GOTO LBLPARCEL_BLOCK_PO_DETAILS
+  ELSE GOTO LAST
+
+LBLPARCEL_BLOCK_PO_DETAILS:
+	SELECT a.* FROM PARCEL_BLOCK_PO_DETAILS a (NOLOCK)
+	JOIN parcel_det b (NOLOCK) ON a.parcel_det_row_id=b.row_Id 
+	WHERE b.PARCEL_MEMO_ID=@CMEMOID
+
+	GOTO LAST
+  
+LBLREF_TYPE:
+	SELECT 'ASN' AS REF_TYPE,'1' AS REF_GRN_MODE
+	UNION
+	SELECT 'PO(DIRECT)' AS REF_TYPE,'2' AS REF_GRN_MODE
+	GOTO LAST  
+
+LBLLIST_ASN_PO:      
+	SELECT CAST(0 AS BIT) AS CHK,LM.AC_NAME ,LM.AC_CODE , A.MEMO_NO ,A.MEMO_DT,A.MEMO_ID ,
+	A.NO_OF_CARTONS,A.TOTAL_WEIGHT_SHIPMENT,A.DATE_TIME_SHIPMENT,A.EXPECTED_TIME_ARRIVAL ,
+	SUM(DET.QUANTITY) AS TOTAL_QTY,''UOM_NAME,
+	CAST(CASE WHEN ISNULL(POD.BLOCK,0)=1 THEN 1
+	     WHEN isnull(POD.DELIVERY_DT,'') >CONVERT (VARCHAR(10),GETDATE(),121) THEN 1 
+	     ELSE 0 END AS BIT) AS BLOCK
+	FROM ASN_MST  A (NOLOCK)
+	JOIN LM01106 LM (NOLOCK) ON LM.AC_CODE =A.AC_CODE 
+	JOIN ASN_DET DET (NOLOCK) ON A.MEMO_ID =DET.MEMO_ID 
+	LEFT JOIN
+	(
+		SELECT REF_MEMO_ID 
+		FROM PARCEL_DET A (NOLOCK)
+		JOIN PARCEL_MST B (NOLOCK) ON A.PARCEL_MEMO_ID =B.PARCEL_MEMO_ID 
+		WHERE B.CANCELLED =0 AND b.xn_type='ASN'
+		GROUP BY  REF_MEMO_ID
+	)B ON A.MEMO_ID =B.REF_MEMO_ID 
+	LEFT JOIN
+	(
+	  SELECT A.row_id ,ISNULL(B.BLOCK,0) AS BLOCK,B.DELIVERY_DT  
+	   FROM pod01106 A (NOLOCK)
+	  JOIN pom01106 B (NOLOCK) ON A.po_id =B.po_id
+	  WHERE B.CANCELLED =0
+	) POD ON POD.ROW_ID=DET.PO_ROW_ID 
+	WHERE A.CANCELLED =0 
+	AND B.REF_MEMO_ID IS NULL
+	AND A.AC_CODE =@CMEMOID AND 1=@NNAVMODE
+	GROUP BY LM.AC_NAME ,LM.AC_CODE , A.MEMO_NO ,A.MEMO_DT,A.MEMO_ID ,
+	A.NO_OF_CARTONS,A.TOTAL_WEIGHT_SHIPMENT,A.DATE_TIME_SHIPMENT,A.EXPECTED_TIME_ARRIVAL,
+	CAST(CASE WHEN ISNULL(POD.BLOCK,0)=1 THEN 1
+	     WHEN isnull(POD.DELIVERY_DT,'') >CONVERT (VARCHAR(10),GETDATE(),121) THEN 1 
+	     ELSE 0 END AS BIT)
+	
+	UNION      
+	
+	SELECT CAST(0 AS BIT) AS CHK,LM.AC_NAME ,LM.AC_CODE , A.PO_NO AS MEMO_NO ,A.PO_DT AS MEMO_DT,A.PO_ID  AS MEMO_ID,
+	0 AS NO_OF_CARTONS,'' TOTAL_WEIGHT_SHIPMENT,'' DATE_TIME_SHIPMENT,''EXPECTED_TIME_ARRIVAL ,
+	SUM(DET.QUANTITY) AS TOTAL_QTY,''UOM_NAME,
+	CASE WHEN ISNULL(A.BLOCK,0)=1 THEN 1
+	     WHEN A.DELIVERY_DT < CONVERT (VARCHAR(10),GETDATE(),121) THEN 1 
+	     ELSE 0 END AS BLOCK
+	FROM POM01106  A (NOLOCK)
+	JOIN LM01106 LM (NOLOCK) ON LM.AC_CODE =A.AC_CODE  
+	JOIN POD01106 DET (NOLOCK) ON A.PO_ID =DET.PO_ID 
+	LEFT JOIN
+	(
+		SELECT REF_MEMO_ID,SUM(QUANTITY) AS PARCEL_QTY 
+		FROM PARCEL_DET A (NOLOCK)
+		JOIN PARCEL_MST B (NOLOCK) ON A.PARCEL_MEMO_ID =B.PARCEL_MEMO_ID 
+		WHERE B.CANCELLED =0 AND A.REF_GRN_MODE ='2' GROUP BY REF_MEMO_ID
+	) B ON A.PO_ID =B.REF_MEMO_ID 
+	WHERE A.CANCELLED =0 
+	--AND B.REF_MEMO_ID IS NULL
+	AND A.TOTAL_QUANTITY - ISNULL(B.PARCEL_QTY,0) > 0 
+	AND (@nXN_ITEM_TYPE=0 OR A.xn_item_type=@nXN_ITEM_TYPE)
+	AND A.AC_CODE =@CMEMOID AND 2=@NNAVMODE
+	GROUP BY LM.AC_NAME ,LM.AC_CODE , A.PO_NO ,A.PO_DT,A.PO_ID,
+	CASE WHEN ISNULL(A.BLOCK,0)=1 THEN 1
+	     WHEN A.DELIVERY_DT <CONVERT (VARCHAR(10),GETDATE(),121) THEN 1 
+	     ELSE 0 END
+     
+ 
+	GOTO LAST  
+  	
+LBLPARCELBILLS:
+	
+	SELECT a.*
+	      --,MST.TOT_BOXES  AS TOTAL_BOXES,'' AS BILL_CHALLAN_NO ,b.REF_MEMO_ID ,B.REF_MEMO_NO,
+	      -- B.PARCEL_MEMO_ID,mst.*,B.* 
+	FROM PARCEL_SUB_DET a (NOLOCK)
+	JOIN PARCEL_DET B (NOLOCK) ON A.PARCEL_DET_ROW_ID=B.ROW_ID 
+	WHERE b.PARCEL_MEMO_ID=@CMEMOID
+    
+    GOTO LAST  
+    
+    
+LBLNAVIGATE:      
+
+    EXECUTE SP_NAVIGATE 'PARCEL_MST',@NNAVMODE,@CMEMOID,@CWHERE2,'PARCEL_MEMO_NO','PARCEL_MEMO_DT','PARCEL_MEMO_ID',@CWHERE1      
+    
+    GOTO LAST    
+        
+LBLPARCELMST:    
+     --SELECT '' as ac_code,'' as ac_name, A.*,AN.ANGADIA_NAME,U.USERNAME,U1.USERNAME  ,S.SHIPPING_NAME    
+     --FROM  PARCEL_MST A(NOLOCK)     
+     --JOIN ANGM AN(NOLOCK) ON AN.ANGADIA_CODE=A.ANGADIA_CODE    
+     --JOIN USERS U(NOLOCK) ON U.USER_CODE=A.USER_CODE    
+     --LEFT JOIN USERS U1(NOLOCK) ON U1.USER_CODE=A.EDT_USER_CODE    
+     --LEFT OUTER JOIN SHIPPING_MODE S(NOLOCK) ON  A.SHIPPING_CODE= S.SHIPPING_CODE
+     --WHERE A.PARCEL_MEMO_ID=@CMEMOID    
+     --ORDER BY A.PARCEL_MEMO_ID  
+     
+	IF @CXNTYPE='WSL'  
+	BEGIN      
+		SELECT '' as ac_code,'' as ac_name, A.*,AN.ANGADIA_NAME,U.USERNAME,U1.USERNAME  ,S.SHIPPING_NAME,I.route_form1 ,i.route_form2   
+		,lm.ac_Name as parcel_ac_name,lm_OEM.ac_Name as oem_ac_name
+		FROM   INM01106 I  (NOLOCK) 
+		JOIN PARCEL_DET B (NOLOCK) ON b.REF_MEMO_ID=I.INV_ID   
+		JOIN PARCEL_MST A (NOLOCK) ON A.parcel_memo_id=b.parcel_memo_id AND A.xn_type='WSL'    
+		JOIN ANGM AN(NOLOCK) ON AN.ANGADIA_CODE=A.ANGADIA_CODE      
+		LEFT OUTER JOIN USERS U(NOLOCK) ON U.USER_CODE=A.USER_CODE 
+		LEFT OUTER JOIN LM01106 lm (NOLOCK) ON lm.AC_CODE=a.PARCEL_AC_CODE
+		LEFT JOIN USERS U1(NOLOCK) ON U1.USER_CODE=A.EDT_USER_CODE      
+		LEFT OUTER JOIN SHIPPING_MODE S(NOLOCK) ON  A.SHIPPING_CODE= S.SHIPPING_CODE  
+		LEFT OUTER JOIN LM01106 lm_OEM (NOLOCK) ON lm_OEM.AC_CODE=a.OEM_AC_CODE
+		WHERE A.PARCEL_MEMO_ID=@CMEMOID 
+    END
+	ELSE
+	BEGIN
+		SELECT '' as ac_code,'' as ac_name, A.*,AN.ANGADIA_NAME,U.USERNAME,U1.USERNAME  ,S.SHIPPING_NAME ,'' route_form1,'' route_form2   
+		,lm.ac_Name as parcel_ac_name,lm_OEM.ac_Name as oem_ac_name
+		FROM  PARCEL_MST A(NOLOCK)     
+		JOIN ANGM AN(NOLOCK) ON AN.ANGADIA_CODE=A.ANGADIA_CODE    
+		LEFT OUTER JOIN USERS U(NOLOCK) ON U.USER_CODE=A.USER_CODE    
+		LEFT OUTER JOIN LM01106 lm (NOLOCK) ON lm.AC_CODE=a.PARCEL_AC_CODE
+		LEFT JOIN USERS U1(NOLOCK) ON U1.USER_CODE=A.EDT_USER_CODE    
+		LEFT OUTER JOIN SHIPPING_MODE S(NOLOCK) ON  A.SHIPPING_CODE= S.SHIPPING_CODE
+		LEFT OUTER JOIN LM01106 lm_OEM (NOLOCK) ON lm_OEM.AC_CODE=a.OEM_AC_CODE
+		WHERE A.PARCEL_MEMO_ID=@CMEMOID    
+		ORDER BY A.PARCEL_MEMO_ID    
+	END  
+       
+   GOTO LAST    
+       
+           
+LBLPARCELDET:    
+	
+		SELECT CAST('' AS VARCHAR(50)) AS MEMO_ID,CAST(0 AS BIT) AS EINVOICED, CAST('' AS VARCHAR(10)) AS MEMO_TYPE,CAST(0 AS BIT) AS EWAY
+		INTO #REFDOC WHERE 1=2 
+
+		SELECT @cXNTYPE=XN_TYPE FROM parcel_mst WHERE parcel_memo_id=@CMEMOID
+		IF @CXNTYPE='WSL'
+		BEGIN
+			INSERT INTO #REFDOC (MEMO_ID,EINVOICED,MEMO_TYPE,EWAY)
+			SELECT INV_ID AS MEMO_ID,CAST ((CASE WHEN ISNULL(EINV_IRN_NO,'') <>'' THEN 1 ELSE 0 END) AS BIT) AS EINVOICED,
+			CASE WHEN ISNULL(inv_mode,1)=2 THEN 'Group' ELSE 'Party' END AS MEMO_TYPE  ,
+			CAST ((CASE WHEN ISNULL(AUTO_EWAYBILL_NO,'') <>'' THEN 1 ELSE 0 END) AS BIT) AS EWAY
+			FROM INM01106 A
+			JOIN parcel_det B ON B.REF_MEMO_ID=A.INV_ID
+			WHERE B.parcel_memo_id=@CMEMOID
+		END
+		IF @CXNTYPE='PRT'
+		BEGIN
+			INSERT INTO #REFDOC (MEMO_ID,EINVOICED,MEMO_TYPE,EWAY)
+			SELECT RM_ID AS MEMO_ID,CAST ((CASE WHEN ISNULL(EINV_IRN_NO,'') <>'' THEN 1 ELSE 0 END) AS BIT) AS EINVOICED,
+			CASE WHEN ISNULL(mode,1)=2 THEN 'Group' ELSE 'Party' END AS MEMO_TYPE  ,
+			CAST ((CASE WHEN ISNULL(AUTO_EWAYBILL_NO,'') <>'' THEN 1 ELSE 0 END) AS BIT) AS EWAY
+			FROM RMM01106 A
+			JOIN parcel_det B ON B.REF_MEMO_ID=A.RM_ID
+			WHERE B.parcel_memo_id=@CMEMOID
+		END
+		IF @CXNTYPE='WSR'
+		BEGIN
+			INSERT INTO #REFDOC (MEMO_ID,EINVOICED,MEMO_TYPE,EWAY)
+			SELECT cn_id AS MEMO_ID,CAST ((CASE WHEN ISNULL(EINV_IRN_NO,'') <>'' THEN 1 ELSE 0 END) AS BIT) AS EINVOICED,
+			CASE WHEN ISNULL(mode,1)=2 THEN 'Group' ELSE 'Party' END AS MEMO_TYPE   ,
+			CAST (0 AS BIT) AS EWAY
+			FROM CNM01106 A
+			JOIN parcel_det B ON B.REF_MEMO_ID=A.CN_ID
+			WHERE B.parcel_memo_id=@CMEMOID
+		END
+		IF @CXNTYPE='SLS'
+		BEGIN
+			INSERT INTO #REFDOC (MEMO_ID,EINVOICED,MEMO_TYPE,EWAY)
+			SELECT cM_id AS MEMO_ID,CAST ((CASE WHEN ISNULL(EINV_IRN_NO,'') <>'' THEN 1 ELSE 0 END) AS BIT) AS EINVOICED,
+			'Party'  AS MEMO_TYPE   ,
+			CAST (0 AS BIT) AS EWAY
+			FROM CMM01106 A
+			JOIN parcel_det B ON B.REF_MEMO_ID=A.CM_ID
+			WHERE B.parcel_memo_id=@CMEMOID
+		END
+		SELECT a.*,ac_name, U.UOM_NAME ,
+		(CASE WHEN ISNULL(REF_GRN_MODE,'') ='2' THEN 'PO(Direct)' WHEN ISNULL(REF_GRN_MODE,'')='1' THEN  'ASN' ELSE '' END) AS REF_TYPE, 
+		  cast(0 as numeric(10,2)) as Cash_Amount,
+	      cast(0 as numeric(10,2)) as Credit_Amount,
+		  ISNULL(D.EINVOICED,0) AS EINVOICED,ISNULL(D.MEMO_TYPE,'') AS MEMO_TYPE,ISNULL(D.EWAY,0) AS EWAY
+	 FROM  PARCEL_DET A(NOLOCK)    
+	 JOIN PARCEL_MST MST(NOLOCK) ON MST.PARCEL_MEMO_ID=A.PARCEL_MEMO_ID    
+	 LEFT OUTER JOIN LM01106 lm (NOLOCK) ON lm.AC_CODE=a.AC_CODE
+	 JOIN UOM U(NOLOCK) ON U.UOM_CODE=A.UOM_CODE    
+	 LEFT OUTER JOIN #REFDOC D ON D.MEMO_ID=A.REF_MEMO_ID
+	 WHERE A.PARCEL_MEMO_ID=@CMEMOID      
+	      
+   GOTO LAST        
+ 
+LBLFETCHDOCDETAILS:
+ 
+  IF @CXNTYPE='WSL'
+  BEGIN
+	  SELECT ac_name,'LATER' AS  row_id,'01' as company_code,GETDATE() AS last_update,'LATER' AS parcel_memo_id,
+	  b.fin_year,0 AS qty,U.uom_code as uom_code,'' as goods_desc,'' as REMARKS,
+	  SUM(a.quantity) AS quantity,net_amount AS amount,1 as BOX_NO,@cMemoId AS REF_MEMO_ID,b.AC_CODE,inv_no AS REF_MEMO_NO,
+	  inv_no as PARTY_INV_NO,net_amount AS PARTY_INV_AMT,inv_dt as PARTY_INV_DT,0 as REF_GRN_MODE,1 as CLOSED
+	  ,U.UOM_NAME as UOM_NAME,'WSL' AS REF_TYPE,
+	  cast(0 as numeric(10,2)) as Cash_Amount,
+	  cast(0 as numeric(10,2)) as Credit_Amount,
+		  cast(0 as numeric(10,2))  AS FREIGHT_AMOUNT,
+		  cast('' as VARCHAR(20))  AS HSN_CODE,
+		  cast(0 as numeric(10,2))  AS GST_PERCENTAGE
+   	  FROM ind01106 a (NOLOCK) JOIN inm01106 b (NOLOCK) ON a.inv_id=b.inv_id
+   	  JOIN LM01106 lm (NOLOCK) ON lm.AC_CODE=b.ac_code
+	  JOIN UOM U (NOLOCK) ON U.UOM_CODE='0000003'
+   	  WHERE b.inv_id=@cMemoId
+   	  GROUP BY inv_no,a.inv_id,FIN_YEAR,NET_AMOUNT,b.ac_code,inv_dt,ac_name,U.uom_code,U.UOM_NAME
+  END 
+  ELSE
+  IF @CXNTYPE='PRT'
+  BEGIN
+	  SELECT ac_name,'LATER' AS  row_id,'01' as company_code,GETDATE() AS last_update,'LATER' AS parcel_memo_id,
+	  b.fin_year,0 AS qty,U.uom_code  as uom_code,'' as goods_desc,'' as REMARKS,
+	  SUM(a.quantity) AS quantity,total_amount AS amount,1 as BOX_NO,@cMemoId AS REF_MEMO_ID,b.AC_CODE,rm_no AS REF_MEMO_NO,
+	  rm_no as PARTY_INV_NO,total_amount AS PARTY_INV_AMT,rm_dt as PARTY_INV_DT,0 as REF_GRN_MODE,1 as CLOSED,U.UOM_NAME as UOM_NAME,'PRT' AS REF_TYPE,
+	  cast(0 as numeric(10,2)) as Cash_Amount,
+	  cast(0 as numeric(10,2)) as Credit_Amount,
+		  cast(0 as numeric(10,2))  AS FREIGHT_AMOUNT,
+		  cast('' as VARCHAR(20))  AS HSN_CODE,
+		  cast(0 as numeric(10,2))  AS GST_PERCENTAGE
+   	  FROM rmd01106 a (NOLOCK) JOIN rmm01106 b (NOLOCK) ON a.rm_id=b.rm_id
+   	  JOIN LM01106 lm (NOLOCK) ON lm.AC_CODE=b.ac_code
+	  JOIN UOM U (NOLOCK) ON U.UOM_CODE='0000003'
+   	  WHERE b.rm_id=@cMemoId
+   	  GROUP BY rm_no,a.rm_id,FIN_YEAR,total_amount,b.ac_code,rm_dt,ac_name,U.uom_code,U.UOM_NAME
+  END 
+	ELSE
+  IF @CXNTYPE='MIS'
+  BEGIN
+	  SELECT ac_name,'LATER' AS  row_id,'01' as company_code,GETDATE() AS last_update,'LATER' AS parcel_memo_id,
+	  b.fin_year,0 AS qty,U.uom_code  as uom_code,'' as goods_desc,'' as REMARKS,
+	  SUM(a.quantity) AS quantity,total_amount AS amount,1 as BOX_NO,@cMemoId AS REF_MEMO_ID,c.AC_CODE,issue_no AS REF_MEMO_NO,
+	  issue_no as PARTY_INV_NO,total_amount AS PARTY_INV_AMT,issue_dt as PARTY_INV_DT,0 as REF_GRN_MODE,1 as CLOSED,U.UOM_NAME as UOM_NAME,'MIS' AS REF_TYPE,
+	  cast(0 as numeric(10,2)) as Cash_Amount,
+	  cast(0 as numeric(10,2)) as Credit_Amount,
+		  cast(0 as numeric(10,2))  AS FREIGHT_AMOUNT,
+		  cast('' as VARCHAR(20))  AS HSN_CODE,
+		  cast(0 as numeric(10,2))  AS GST_PERCENTAGE
+   	  FROM BOM_ISSUE_DET a (NOLOCK) 
+   	  JOIN BOM_ISSUE_MST b (NOLOCK) ON a.issue_id=b.issue_id
+   	  JOIN prd_agency_mst c (NOLOCK) ON c.agency_code=b.agency_code
+   	  JOIN LM01106 lm (NOLOCK) ON lm.AC_CODE=c.ac_code
+	  JOIN UOM U (NOLOCK) ON U.UOM_CODE='0000003'
+   	  WHERE b.issue_id=@cMemoId
+   	  GROUP BY issue_no,a.issue_id,FIN_YEAR,total_amount,c.ac_code,issue_dt,ac_name,U.uom_code,U.UOM_NAME
+  END       
+  ELSE
+  IF @CXNTYPE='JWI'
+  BEGIN
+	  SELECT ac_name,'LATER' AS  row_id,'01' as company_code,GETDATE() AS last_update,'LATER' AS parcel_memo_id,
+	  b.fin_year,0 AS qty,U.uom_code  as uom_code,'' as goods_desc,'' as REMARKS,
+	  SUM(a.quantity) AS quantity,total_amount AS amount,1 as BOX_NO,@cMemoId AS REF_MEMO_ID,c.AC_CODE,issue_no AS REF_MEMO_NO,
+	  issue_no as PARTY_INV_NO,total_amount AS PARTY_INV_AMT,issue_dt as PARTY_INV_DT,0 as REF_GRN_MODE,1 as CLOSED,U.UOM_NAME as UOM_NAME,'JWI' AS REF_TYPE,
+	  cast(0 as numeric(10,2)) as Cash_Amount,
+	  cast(0 as numeric(10,2)) as Credit_Amount,
+		  cast(0 as numeric(10,2))  AS FREIGHT_AMOUNT,
+		  cast('' as VARCHAR(20))  AS HSN_CODE,
+		  cast(0 as numeric(10,2))  AS GST_PERCENTAGE
+   	  FROM JOBWORK_ISSUE_DET a (NOLOCK) 
+   	  JOIN JOBWORK_ISSUE_MST b (NOLOCK) ON a.issue_id=b.issue_id
+   	  JOIN prd_agency_mst c (NOLOCK) ON c.agency_code=b.agency_code
+   	  JOIN LM01106 lm (NOLOCK) ON lm.AC_CODE=c.ac_code
+	  JOIN UOM U (NOLOCK) ON U.UOM_CODE='0000003'
+   	  WHERE b.issue_id=@cMemoId
+   	  GROUP BY issue_no,a.issue_id,FIN_YEAR,total_amount,c.ac_code,issue_dt,ac_name,U.uom_code,U.UOM_NAME
+  END     
+  IF @CXNTYPE='JWR'
+  BEGIN
+	  SELECT ac_name,'LATER' AS  row_id,'01' as company_code,GETDATE() AS last_update,'LATER' AS parcel_memo_id,
+	  b.fin_year,0 AS qty,U.uom_code  as uom_code,'' as goods_desc,'' as REMARKS,
+	  SUM(a.quantity) AS quantity,net_amount AS amount,1 as BOX_NO,@cMemoId AS REF_MEMO_ID,c.AC_CODE,receipt_no AS REF_MEMO_NO,
+	  receipt_no as PARTY_INV_NO,net_amount AS PARTY_INV_AMT,receipt_dt as PARTY_INV_DT,0 as REF_GRN_MODE,1 as CLOSED,U.UOM_NAME as UOM_NAME,'JWR' AS REF_TYPE,
+	  cast(0 as numeric(10,2)) as Cash_Amount,
+	  cast(0 as numeric(10,2)) as Credit_Amount,
+		  cast(0 as numeric(10,2))  AS FREIGHT_AMOUNT,
+		  cast('' as VARCHAR(20))  AS HSN_CODE,
+		  cast(0 as numeric(10,2))  AS GST_PERCENTAGE
+   	  FROM jobwork_receipt_det a (NOLOCK) 
+   	  JOIN jobwork_receipt_mst b (NOLOCK) ON a.receipt_id=b.receipt_id
+   	  JOIN prd_agency_mst c (NOLOCK) ON c.agency_code=b.agency_code
+   	  JOIN LM01106 lm (NOLOCK) ON lm.AC_CODE=c.ac_code
+	  JOIN UOM U (NOLOCK) ON U.UOM_CODE='0000003'
+   	  WHERE b.receipt_id=@cMemoId
+   	  GROUP BY receipt_no,a.receipt_id,FIN_YEAR,net_amount,c.ac_code,receipt_dt,ac_name,U.uom_code,U.UOM_NAME
+  END   
+  IF @CXNTYPE='SLS'
+  BEGIN
+	  SELECT '' ac_name,'LATER' AS  row_id,'01' as company_code,GETDATE() AS last_update,'LATER' AS parcel_memo_id,
+	  b.fin_year,0 AS qty,U.uom_code  as uom_code,'' as goods_desc,'' as REMARKS,
+	  SUM(a.quantity) AS quantity,net_amount AS amount,1 as BOX_NO,@cMemoId AS REF_MEMO_ID,'0000000000' AC_CODE,cm_no AS REF_MEMO_NO,
+	  cm_no as PARTY_INV_NO,net_amount AS PARTY_INV_AMT,cm_dt as PARTY_INV_DT,0 as REF_GRN_MODE,1 as CLOSED,U.UOM_NAME as UOM_NAME,'SLS' AS REF_TYPE,
+	  cast(0 as numeric(10,2)) as Cash_Amount,
+	  cast(0 as numeric(10,2)) as Credit_Amount,
+		  cast(0 as numeric(10,2))  AS FREIGHT_AMOUNT,
+		  cast('' as VARCHAR(20))  AS HSN_CODE,
+		  cast(0 as numeric(10,2))  AS GST_PERCENTAGE
+   	  FROM cmd01106 a (NOLOCK) 
+   	  JOIN cmm01106 b (NOLOCK) ON a.cm_id=b.cm_id
+   	  --JOIN prd_agency_mst c (NOLOCK) ON c.agency_code=b.agency_code
+   	  --JOIN LM01106 lm (NOLOCK) ON lm.AC_CODE=c.ac_code
+	  JOIN UOM U (NOLOCK) ON U.UOM_CODE='0000003'
+   	  WHERE b.cm_id=@cMemoId
+   	  GROUP BY cm_no,a.cm_id,FIN_YEAR,net_amount,cm_dt,U.uom_code,U.UOM_NAME
+  END  
+  GOTO LAST  
+LBLPARTYLIST:    
+      
+	DECLARE @CHEADCODE21 VARCHAR(MAX), @CHEADCODE18 VARCHAR(MAX)
+	SET @CHEADCODE21=DBO.FN_ACT_TRAVTREE('0000000021')
+	SET @CHEADCODE18=DBO.FN_ACT_TRAVTREE('0000000018')
+	SELECT  LM.ALIAS,LM.AC_CODE, LM.AC_NAME, ISNULL(LMP.CREDIT_DAYS, 0) AS CREDIT_DAYS,   
+	ISNULL(LMP.DISCOUNT_PERCENTAGE, 0) AS DISCOUNT_PERCENTAGE,  
+	ISNULL(LMP.ADDRESS0,'') + ' ' + ISNULL(LMP.ADDRESS1,'') + ' ' + ISNULL(LMP.ADDRESS2,'') + ', ' + ISNULL(AREA.AREA_NAME,'') + ' ' + ISNULL(CITY.CITY,'') + ' ' +   
+	ISNULL(STATE.STATE,'') AS 'SUPP_ADDRESS', AC_NAME AS REPCOLNAME ,LMP.FORM_ID ,ISNULL(F.FORM_NAME,'') AS [FORM_NAME] , LMP.MP_PERCENTAGE, 
+	LMP.ADDRESS0 , LMP.ADDRESS1 , LMP.ADDRESS2, AREA.AREA_NAME , CITY.CITY ,STATE.STATE ,AREA.PINCODE , LM.ALIAS_TO_BE_SUFFIXED ,HEAD_CODE,ALLOW_CREDITOR_DEBTOR
+	FROM LM01106 LM(NOLOCK)   
+	LEFT OUTER JOIN LMP01106 LMP(NOLOCK)   ON LMP.AC_CODE=LM.AC_CODE
+	LEFT OUTER JOIN FORM F(NOLOCK) ON F.FORM_ID=LMP.FORM_ID
+	LEFT OUTER JOIN AREA(NOLOCK) ON ( LMP.AREA_CODE = AREA.AREA_CODE )  
+	LEFT OUTER JOIN CITY(NOLOCK) ON ( AREA.CITY_CODE = CITY.CITY_CODE )  
+	LEFT OUTER JOIN STATE(NOLOCK) ON ( CITY.STATE_CODE = STATE.STATE_CODE )  
+	LEFT OUTER JOIN REGIONM(NOLOCK)  ON STATE.REGION_CODE = REGIONM.REGION_CODE    
+	WHERE 1=2
+	--( CHARINDEX ( HEAD_CODE, @CHEADCODE21 ) > 0 OR CHARINDEX ( HEAD_CODE, @CHEADCODE18 ) > 0 OR ALLOW_CREDITOR_DEBTOR = 1 )   
+	--AND LM.INACTIVE = 0 AND LM.AC_NAME <> '' AND 1=2
+     
+        
+    GOTO LAST      
+         
+  LBLTRANSPORTLIST:      
+
+   if NOT  EXISTS(SELECT top 1 lmacCode FROM lm_angm WHERE lmacCode=@CWHERE1)
+	   Begin
+			SELECT A.*,AR.AREA_NAME,C.CITY,S.STATE 
+			FROM ANGM A (NOLOCK)   
+			JOIN AREA AR(NOLOCK) ON AR.AREA_CODE=A.AREA_CODE    
+			JOIN CITY C(NOLOCK) ON C.CITY_CODE=AR.CITY_CODE    
+			JOIN STATE S(NOLOCK) ON S.STATE_CODE=C.STATE_CODE    
+			WHERE A.INACTIVE=0    
+			ORDER BY A.ANGADIA_NAME 
+		End
+   ELSE
+		Begin
+				SELECT A.*,AR.AREA_NAME,C.CITY,S.STATE 
+				FROM ANGM A (NOLOCK)   
+				join lm_angm	 lm on A.ac_code= lm.angmacCode 
+				JOIN AREA AR(NOLOCK) ON AR.AREA_CODE=A.AREA_CODE    
+				JOIN CITY C(NOLOCK) ON C.CITY_CODE=AR.CITY_CODE    
+				JOIN STATE S(NOLOCK) ON S.STATE_CODE=C.STATE_CODE    
+				WHERE A.INACTIVE=0   And lmacCode= @CWHERE1
+				ORDER BY A.ANGADIA_NAME 
+		End 
+  GOTO LAST      
+      
+           
+LBLUOM:      
+        SELECT UOM_CODE,UOM_NAME,UOM_TYPE FROM UOM(NOLOCK)     
+        WHERE INACTIVE=0    
+        ORDER BY UOM_NAME    
+  GOTO LAST      
+      
+LBLAUNGDIADETAILS:      
+   
+         
+   DECLARE @CSTR NVARCHAR(MAX),@NXNMODE INT,@CSEARCHXNTYPE VARCHAR(10),@CSEARCHMEMOID VARCHAR(40)    
+   
+   SELECT @NXNMODE=1,@CSEARCHXNTYPE=@CXNTYPE,@CSEARCHMEMOID=@CWHERE2
+   
+   IF @CXNTYPE='PUR'
+		SELECT TOP 1 @NXNMODE=INV_MODE,@CSEARCHMEMOID=INV_ID FROM PIM01106 (NOLOCK) WHERE MRR_ID=@CWHERE2 AND INV_MODE=2
+   ELSE IF @CXNTYPE='WSR'
+		SELECT TOP 1 @NXNMODE=MODE,@CSEARCHMEMOID=RM_ID FROM CNM01106(NOLOCK) WHERE CN_ID=@CWHERE2 AND MODE=2
+   
+   IF @NXNMODE=2 AND @CXNTYPE NOT IN ('GRN')
+		SET @CSEARCHXNTYPE=(CASE WHEN @CXNTYPE='PUR' THEN 'WSL' ELSE 'PRT' END)
+   
+   
+   
+   IF @NNAVMODE=1
+   BEGIN				
+	   SET @CSTR=N'SELECT MST.*,    
+	  (CASE WHEN ISNULL(BI.REF_MEMO_ID,'''')=''''THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END)AS CHK, CAST('''' AS varchar(50)) AS SP_ID,   
+	  A.ANGADIA_NAME,(CASE WHEN MST.PAY_TYPE=2 THEN ''PAID BY SUPPLIER'' ELSE ''PAID BY COMPANY'' END) AS PAY_TYPE_NAME,
+	  (CASE WHEN ref_grn_mode=3 THEN ''DIRECT'' WHEN ref_grn_mode=1 THEN ''ASN'' 
+		    ELSE ''PO(DIRECT)'' END) AS grn_type,
+	  BI.*
+	  FROM PARCEL_MST MST(NOLOCK)    
+	  JOIN ANGM A(NOLOCK) ON A.ANGADIA_CODE=MST.ANGADIA_CODE    
+	  JOIN parcel_det bi (NOLOCK) ON bi.parcel_memo_id=mst.parcel_memo_id
+	  LEFT OUTER JOIN parcel_xns_link lnk (NOLOCK) ON lnk.PARCEL_row_ID=bi.row_ID AND lnk.memo_id=bi.ref_memo_id AND lnk.xn_type='''+@CSEARCHXNTYPE+'''
+	  WHERE MST.CANCELLED=0 AND bi.ref_memo_id='''+@CSEARCHMEMOID+''' AND mst.xn_type='''+@CSEARCHXNTYPE+''''
+  END
+  ELSE
+  IF LTRIM(RTRIM(@CSEARCHXNTYPE))='GRN'
+  BEGIN
+  	   SET @CSTR=N'SELECT DISTINCT MST.*, CAST(0 AS BIT) AS CHK, 
+  	   CAST('''' AS varchar(50)) AS SP_ID,   
+	  A.ANGADIA_NAME,(CASE WHEN MST.PAY_TYPE=2 THEN ''PAID BY SUPPLIER'' ELSE ''PAID BY COMPANY'' END) AS PAY_TYPE_NAME,
+	  (CASE WHEN ref_grn_mode=3 THEN ''DIRECT'' WHEN ref_grn_mode=1 THEN ''ASN'' 
+		    ELSE ''PO(DIRECT)'' END) AS grn_type, BI.*
+	  FROM PARCEL_MST MST(NOLOCK)    
+	  JOIN ANGM A(NOLOCK) ON A.ANGADIA_CODE=MST.ANGADIA_CODE 
+	  JOIN PARCEL_DET BI(NOLOCK) ON BI.PARCEL_MEMO_ID=MST.PARCEL_MEMO_ID
+	  LEFT OUTER JOIN grn_ps_mst d (NOLOCK) ON d.REF_PARCEL_ROW_ID=bi.row_id
+	  WHERE MST.CANCELLED=0 AND MST.XN_TYPE=''' + @CSEARCHXNTYPE +''' AND bi.AC_CODE=''' + @CWHERE1 +''' 	  
+	  AND  (d.memo_id IS NULL OR bi.closed=0)' 
+  END
+  ELSE
+  BEGIN
+  	   SET @CSTR=N'SELECT MST.*,
+  	   (CASE WHEN ISNULL(BI.REF_MEMO_ID,'''')=''''THEN CAST(0 AS BIT) 
+  	    ELSE CAST(1 AS BIT) END)AS CHK, 
+  	   CAST('''' AS varchar(50)) AS SP_ID,   
+	  A.ANGADIA_NAME,(CASE WHEN MST.PAY_TYPE=2 THEN ''PAID BY SUPPLIER'' ELSE ''PAID BY COMPANY'' END) AS PAY_TYPE_NAME,
+	  (CASE WHEN ref_grn_mode=3 THEN ''DIRECT'' WHEN ref_grn_mode=1 THEN ''ASN'' 
+		    ELSE ''PO(DIRECT)'' END) AS grn_type, BI.*
+	  FROM PARCEL_MST MST(NOLOCK)    
+	  JOIN ANGM A(NOLOCK) ON A.ANGADIA_CODE=MST.ANGADIA_CODE 
+	  JOIN PARCEL_DET BI(NOLOCK) ON BI.PARCEL_MEMO_ID=MST.PARCEL_MEMO_ID
+	  WHERE MST.CANCELLED=0 AND MST.XN_TYPE=''' + @CSEARCHXNTYPE +''' AND bi.AC_CODE=''' + @CWHERE1 +''' 	  
+	  AND  (ISNULL( BI.REF_MEMO_ID,'''') =''' + @CSEARCHMEMOID+''' OR ISNULL(BI.REF_MEMO_ID,'''')='''' OR bi.closed=0)' 
+  END	         
+  
+  PRINT @CSTR      
+  EXEC SP_EXECUTESQL @CSTR    
+        
+  GOTO LAST  
+  
+LBLASN:      
+        SELECT CAST(0 AS BIT) AS CHK,
+            LM.AC_NAME ,LM.AC_CODE , A.MEMO_NO ,A.MEMO_DT,A.MEMO_ID ,
+            A.NO_OF_CARTONS,ISNULL(A.TOTAL_WEIGHT_SHIPMENT,0) AS TOTAL_WEIGHT_SHIPMENT
+            ,A.DATE_TIME_SHIPMENT,A.EXPECTED_TIME_ARRIVAL ,
+            SUM(DET.QUANTITY) AS TOTAL_QTY,ISNULL(UOM_NAME,'')UOM_NAME
+     FROM ASN_MST  A (NOLOCK)
+     JOIN LM01106 LM (NOLOCK) ON LM.AC_CODE =A.AC_CODE 
+     JOIN ASN_DET DET (NOLOCK) ON A.MEMO_ID =DET.MEMO_ID 
+     LEFT JOIN UOM (NOLOCK) ON UOM.UOM_CODE=A.UOM_CODE
+     LEFT JOIN
+     (
+      SELECT REF_MEMO_ID 
+      FROM parcel_det  A (NOLOCK)
+      JOIN PARCEL_MST B (NOLOCK) ON A.PARCEL_MEMO_ID =B.PARCEL_MEMO_ID 
+      WHERE B.CANCELLED =0 AND B.XN_TYPE ='ASN'
+     ) B ON A.MEMO_ID =B.REF_MEMO_ID 
+     WHERE A.CANCELLED =0 
+     AND B.REF_MEMO_ID IS NULL
+     AND A.AC_CODE =@CMEMOID
+     GROUP BY LM.AC_NAME ,LM.AC_CODE , A.MEMO_NO ,A.MEMO_DT,A.MEMO_ID ,
+      A.NO_OF_CARTONS,A.TOTAL_WEIGHT_SHIPMENT,A.DATE_TIME_SHIPMENT,A.EXPECTED_TIME_ARRIVAL,UOM_NAME    
+  
+  GOTO LAST
+  
+LBLPO:      
+	SELECT CAST(0 AS BIT) AS CHK,
+	LM.AC_NAME ,LM.AC_CODE , A.PO_NO AS MEMO_NO ,A.PO_DT AS MEMO_DT,A.PO_ID  AS MEMO_ID,
+	0 AS NO_OF_CARTONS,0 TOTAL_WEIGHT_SHIPMENT,'' DATE_TIME_SHIPMENT,''EXPECTED_TIME_ARRIVAL ,
+	SUM(DET.QUANTITY) AS TOTAL_QTY,''UOM_NAME
+	FROM POM01106  A (NOLOCK)
+	JOIN LM01106 LM (NOLOCK) ON LM.AC_CODE =A.AC_CODE  
+	JOIN POD01106 DET (NOLOCK) ON A.PO_ID =DET.PO_ID 
+	LEFT JOIN
+	(
+		SELECT REF_MEMO_ID 
+		FROM parcel_det  A (NOLOCK)
+		JOIN PARCEL_MST B (NOLOCK) ON A.PARCEL_MEMO_ID =B.PARCEL_MEMO_ID 
+		WHERE B.CANCELLED =0 AND B.XN_TYPE ='PO'
+	) B ON A.PO_ID =B.REF_MEMO_ID 
+	WHERE A.CANCELLED =0
+	 AND B.REF_MEMO_ID IS NULL
+	AND A.AC_CODE =@CMEMOID
+	GROUP BY LM.AC_NAME ,LM.AC_CODE , A.PO_NO ,A.PO_DT,A.PO_ID 
+ 
+  GOTO LAST  
+  
+  
+LBLGRN:      
+       
+		SELECT CAST(0 AS BIT) CHK, ''  AS MEMO_NO  ,A.PARCEL_MEMO_ID,PARCEL_MEMO_NO,PARCEL_MEMO_DT,ISNULL(PARTY_INV_NO,'')PARTY_INV_NO,ISNULL(PARTY_INV_DT,'')PARTY_INV_DT,
+		ISNULL(PARTY_INV_AMT,0)PARTY_INV_AMT,
+	   (CASE WHEN XN_TYPE='DIR' THEN 'DIRECET' WHEN XN_TYPE='ASN' THEN 'ASN' WHEN XN_TYPE='PO' THEN 'PO(DIRECT)' END) AS MODE
+		FROM PARCEL_MST A(NOLOCK)
+		JOIN parcel_det   C (NOLOCK) ON C.PARCEL_MEMO_ID=A.PARCEL_MEMO_ID 
+		LEFT JOIN GRN_PS_MST B(NOLOCK) ON c.row_id=B.REF_PARCEL_ROW_ID
+		WHERE  XN_TYPE IN ('GRN','DIR','ASN','PO') AND A.CANCELLED=0
+		AND C.AC_CODE =@CMEMOID AND B.REF_PARCEL_ROW_ID IS NULL
+ 
+  GOTO LAST   
+
+LBLPENDINGOUTWARDMEMOS:
+  IF OBJECT_ID('tempdb..#tmpDocs','U') IS NOT NULL
+		DROP TABLE #tmpDocs
+  
+  SELECT a.inv_no as memo_no,a.inv_id as memo_id,a.inv_dt as memo_dt INTO #tmpDocs FROM INM01106 a
+  WHERE 1=2
+  
+  SET @cFilter=(CASE WHEN @CWHERE1='' THEN '1=1' ELSE 'a.ac_code='''+@CWHERE1+'''' END)
+  	  	
+  
+  IF @CXNTYPE='WSL'
+  BEGIN
+		SET @cCmd=N'SELECT a.inv_no as memo_no,a.inv_id as memo_no,a.inv_dt as memo_dt FROM INM01106 a
+		LEFT OUTER JOIN parcel_det b (NOLOCK) ON b.REF_MEMO_ID=a.INV_ID
+		LEFT OUTER JOIN parcel_mst c (NOLOCK) ON c.parcel_memo_id=b.parcel_memo_id AND c.xn_type=''WSL'' AND c.cancelled=0
+		WHERE '+@cFilter+' AND c.parcel_memo_id IS NULL'				
+  END 	  
+  ELSE
+  IF @CXNTYPE='PRT'
+  BEGIN
+		SET @cCmd=N'SELECT a.rm_no as memo_no,a.rm_id as memo_no,a.rm_dt as memo_dt FROM RMM01106 a
+		LEFT OUTER JOIN parcel_det b (NOLOCK) ON b.REF_MEMO_ID=a.rm_ID
+		LEFT OUTER JOIN parcel_mst c (NOLOCK) ON c.parcel_memo_id=b.parcel_memo_id AND c.xn_type=''PRT'' AND c.cancelled=0
+		WHERE '+@cFilter+' AND c.parcel_memo_id IS NULL'				
+  END 
+  ELSE
+  IF @CXNTYPE='MIS'
+  BEGIN
+		SET @cCmd=N'SELECT a.issue_no as memo_no,a.issue_id as memo_no,a.issue_dt as memo_dt 
+		FROM BOM_ISSUE_MST a
+		LEFT OUTER JOIN parcel_det b (NOLOCK) ON b.REF_MEMO_ID=a.ISSUE_ID
+		LEFT OUTER JOIN parcel_mst c (NOLOCK) ON c.parcel_memo_id=b.parcel_memo_id AND c.xn_type=''MIS'' AND c.cancelled=0
+		WHERE '+@cFilter+' AND c.parcel_memo_id IS NULL'				
+  END 	        
+
+  INSERT #tmpDocs (memo_no,memo_id,memo_dt)	   	     
+  EXEC SP_EXECUTESQL @cCmd
+  
+  SELECT * FROM #tmpDocs   
+            
+ LAST:      
+      
+END      
+---'END OF CREATING PROCEDURE SP_PARCEL'
+/*
+EXEC SP_PARCEL 3,'','PP00000006',2,'',0,''
+
+
+parcel_Det
+
+EXEC SP_PARCEL    
+ @NQUERYID=7,      
+ @CMEMOID='',
+ @CWHERE1 = 'JM00000027',      
+ @NNAVMODE = 0,      
+ @CWHERE2 ='',    
+ @RETURN = 0,
+ @CXNTYPE='GRN'
+ 
+EXEc  SP_PARCEL    
+ @NQUERYID=3 ,      
+ @CMEMOID='PP01119000000PP-000004',      
+ @NNAVMODE=1,      
+ @CXNTYPE = 'wsl'
+
+
+select inv_id,* from inm01106 where inv_mode=2 
+
+select * from ind01106 where inv_id='PP01119000000PP-000004'
+select * from parcel_xns_link
+
+select * from parcel_det where row_id='PP7423575A-FA1D-439B-8C3A-4E0F78D598AB'
+
+select ac_name,ac_code from lm01106 where ac_name like '%aditya%'
+SELECT MST.*,    
+	  (CASE WHEN ISNULL(BI.REF_MEMO_ID,'')=''THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END)AS CHK, CAST(1 AS INT) AS SP_ID,   
+	  A.ANGADIA_NAME,BI.party_inv_no,BI.party_inv_dt,BI.qty as quantity
+	   ,(CASE WHEN MST.PAY_TYPE=2 THEN 'PAID' ELSE 'TO PAY' END) AS PAY_TYPE_NAME,BI.*
+	  FROM PARCEL_MST MST(NOLOCK)    
+	  JOIN ANGM A(NOLOCK) ON A.ANGADIA_CODE=MST.ANGADIA_CODE 
+	  JOIN PARCEL_DET BI(NOLOCK) ON BI.PARCEL_MEMO_ID=MST.PARCEL_MEMO_ID	  
+	  WHERE MST.CANCELLED=0 AND MST.XN_TYPE='PUR' AND bi.AC_CODE='PP00000001' 
+	  AND  (ISNULL( BI.REF_MEMO_ID,'') ='PP01119PP/PI/1819-000011' OR ISNULL(BI.REF_MEMO_ID,'')='')
+
+select b.xn_type,a.ac_code, a.* from parcel_det a join parcel_mst b on a.parcel_memo_id=b.parcel_memo_id
+--where a.AC_CODE='PP00000001'
+order by b.last_update desc
+
+update cnm01106 set cancelled=0 where cn_id='PP01119000000PP-000001'
+select cancelled,* from cnm01106 where cn_id='PP01119000000PP-000001'
+select * from parcel_xns_link
+select * from parcel_det where row_id='PP7423575A-FA1D-439B-8C3A-4E0F78D598AB' order by last_update desc
+
+select * from temp_parcel_det_60
+
+select parcel_memo_id, last_update as lupd, * from parcel_mst order by last_update desc	  
+
+
+alter table parcel_mst drop column ac_code char(10)
+
+update parcel_mst set xn_type='wsl' where parcel_memo_id='PP01119000000000000025'
+select * from parcel_det where parcel_memo_id='PP01119000000000000020'
+*/

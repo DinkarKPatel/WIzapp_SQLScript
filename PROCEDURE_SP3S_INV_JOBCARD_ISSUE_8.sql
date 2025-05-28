@@ -1,0 +1,26 @@
+CREATE PROCEDURE [DBO].[SP3S_INV_JOBCARD_ISSUE_8]          
+(          
+  @IMODE INT ,          
+  @CWHERE VARCHAR(MAX)='',      
+  @CAGENCYCODE VARCHAR(20)='',      
+  @FINYEAR VARCHAR(10)=''  ,    
+  @DEPTID VARCHAR(10)='' ,
+  @NRETURNMODE INT=0
+          
+)      
+----WITH ENCRYPTION
+AS          
+          
+BEGIN        
+ DECLARE @CCMD NVARCHAR(MAX)         
+        
+--LBLCANCELCHECK:      8
+       
+ SELECT Q.ISSUE_ID        
+ FROM JOBWORK_RECEIPT_MST A (NOLOCK)                       
+ JOIN JOBWORK_RECEIPT_DET B (NOLOCK) ON A.RECEIPT_ID = B.RECEIPT_ID          
+ JOIN JOBWORK_ISSUE_DET M (NOLOCK) ON M.ROW_ID = B.REF_ROW_ID       
+ JOIN JOBWORK_ISSUE_MST Q (NOLOCK) ON Q.ISSUE_ID = M.ISSUE_ID
+ WHERE Q.ISSUE_ID = @CWHERE       
+
+END

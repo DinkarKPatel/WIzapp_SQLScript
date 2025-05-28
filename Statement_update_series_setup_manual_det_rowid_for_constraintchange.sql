@@ -1,0 +1,1 @@
+update series_setup_manual_det set row_id=newid()

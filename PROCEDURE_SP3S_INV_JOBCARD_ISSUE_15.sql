@@ -1,0 +1,22 @@
+CREATE PROCEDURE [DBO].[SP3S_INV_JOBCARD_ISSUE_15]          
+(          
+  @IMODE INT ,          
+  @CWHERE VARCHAR(MAX)='',      
+  @CAGENCYCODE VARCHAR(20)='',      
+  @FINYEAR VARCHAR(10)=''  ,    
+  @DEPTID VARCHAR(10)='' ,
+  @NRETURNMODE INT=0
+          
+)      
+----WITH ENCRYPTION
+AS          
+          
+BEGIN        
+ DECLARE @CCMD NVARCHAR(MAX) 
+ --LBLDET_REF:          15
+	SELECT C.*
+	FROM BOM_ISSUE_MST A (NOLOCK)             
+	JOIN BOM_ISSUE_DET B (NOLOCK)  ON A.ISSUE_ID = B.ISSUE_ID 
+	JOIN BOM_ISSUE_REF C (NOLOCK)  ON C.BOM_DET_ROW_ID = B.ROW_ID                        
+	WHERE A.ISSUE_ID = @CWHERE            
+END

@@ -1,0 +1,39 @@
+CREATE PROCEDURE SP3S_INSERT_PRODUCT_CODE_TO_DOWNLOAD_IMAGE
+(
+	@cXNTYPE	VARCHAR(100),
+	@cXNID		VARCHAR(100)
+)
+AS
+BEGIN
+	IF  @cXNTYPE='PUR'
+	BEGIN
+		delete a from IMAGE_TO_BE_DOWNLOADED A
+		join PID01106 b ON B.product_code=A.PRODUCT_CODE
+		join pim01106 C (nolock)  ON B.mrr_id=C.mrr_id
+		WHERE C.INV_ID=@cxnid
+
+		INSERT INTO IMAGE_TO_BE_DOWNLOADED (PRODUCT_CODE,DOWNLOAD,LAST_UPDATE  )
+		SELECT distinct PRODUCT_CODE,1,getdate()
+		FROM   PID01106 A (NOLOCK)
+		join pim01106 B (nolock)  ON B.mrr_id=A.mrr_id
+		WHERE B.inv_id=@cxnid
+
+	END
+	ELSE 	IF  @cXNTYPE='WSR'
+	BEGIN
+		delete a from IMAGE_TO_BE_DOWNLOADED A
+		join cnd01106 b ON B.product_code=A.PRODUCT_CODE
+		join cnm01106 C (nolock)  ON B.cn_id=C.cn_id
+		WHERE C.RM_ID=@cxnid
+
+
+		INSERT INTO IMAGE_TO_BE_DOWNLOADED (PRODUCT_CODE,DOWNLOAD,LAST_UPDATE  )
+		SELECT DISTINCT PRODUCT_CODE,1,getdate()
+		FROM   CND01106 A (NOLOCK)
+		join cnm01106 B (nolock)  ON B.cn_id=A.cn_id
+
+		WHERE B.rm_id=@cxnid
+
+	END
+
+END

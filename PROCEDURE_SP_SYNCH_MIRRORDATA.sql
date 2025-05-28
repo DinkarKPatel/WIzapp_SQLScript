@@ -1,0 +1,1 @@
+---This Procedure is no longer in use as mirror tables are now dropped (Date:25-06-2020)

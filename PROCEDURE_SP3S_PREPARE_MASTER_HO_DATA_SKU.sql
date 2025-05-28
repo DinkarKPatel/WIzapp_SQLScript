@@ -1,0 +1,101 @@
+CREATE  PROCEDURE SP3S_PREPARE_MASTER_HO_DATA_SKU
+(
+	@DEPT_ID VARCHAR(5)=''
+)
+AS
+BEGIN
+
+
+          DECLARE @CTABLENAME NVARCHAR(MAX),@CCMD NVARCHAR(MAX),@CCURLOCTIONID VARCHAR(5)
+          ,@CTEMPTABLE VARCHAR(1000),@LOCCTEMPTABLE NVARCHAR(MAX),
+           @CERRMSG VARCHAR(1000)
+          ,@CSTEP INT,@CWHERE NVARCHAR(MAX),@CODING BIT ,@CWHERE1 NVARCHAR(MAX),@CINSERTSKU BIT,
+          @SKUCOL NVARCHAR(MAX),@SKUINS VARCHAR(2) 
+          DECLARE @dtTable TABLE(SRNO INT ,Table_Name		VARCHAR(100), Temp_Table_Name VARCHAR(MAX))
+          DECLARE @Table_Name VARCHAR(100),@Temp_Table_Name VARCHAR(500)
+                  
+          
+BEGIN TRY          
+              DECLARE @TABLE TABLE(ARTICLE_NO VARCHAR(50) ) 
+              
+              SET @CODING=0
+                
+			
+			--set @CERRMSG='temperory out of service'
+			--goto END_PROC	
+          
+			   SET @CTABLENAME='SKU'
+			   SET @CTEMPTABLE ='TEMP_SYNCH_'+@CTABLENAME+'_'+@DEPT_ID
+			   SET @LOCCTEMPTABLE='TEMP_'+@CTABLENAME+'_'+@DEPT_ID+'_DETAIL'
+						  
+			  INSERT INTO @dtTable(SRNO,Table_Name,Temp_Table_Name)
+			  SELECT 1,'SKU','TEMP_SKU_'+@DEPT_ID+'_DETAIL'
+
+			  
+			  SET @CCMD=N' SELECT A.PRODUCT_CODE,A.ARTICLE_NO,A.SECTION_NAME,A.SUB_SECTION_NAME,A.PARA1_NAME,A.PARA2_NAME,A.PARA3_NAME,A.PARA4_NAME,A.PARA5_NAME,A.PARA6_NAME,
+			       SKU.PURCHASE_PRICE,SKU.INV_NO,   convert(varchar(10),SKU.INV_DT,121) AS INV_DT,SKU.AC_CODE, convert(varchar(10),SKU.RECEIPT_DT,121)   AS  RECEIPT_DT,
+				   A.ATTR1_KEY_NAME,A.ATTR2_KEY_NAME,A.ATTR3_KEY_NAME,A.ATTR4_KEY_NAME,A.ATTR5_KEY_NAME,A.ATTR6_KEY_NAME,A.ATTR7_KEY_NAME,A.ATTR8_KEY_NAME,A.ATTR9_KEY_NAME,A.ATTR10_KEY_NAME,
+				   A.ATTR11_KEY_NAME,A.ATTR12_KEY_NAME,A.ATTR13_KEY_NAME,A.ATTR14_KEY_NAME,A.ATTR15_KEY_NAME,A.ATTR16_KEY_NAME,A.ATTR17_KEY_NAME,A.ATTR18_KEY_NAME,A.ATTR19_KEY_NAME,A.ATTR20_KEY_NAME,
+				   A.ATTR21_KEY_NAME,A.ATTR22_KEY_NAME,A.ATTR23_KEY_NAME,A.ATTR24_KEY_NAME,A.ATTR25_KEY_NAME,
+				   sku.ARTICLE_code,sm.SECTION_code,sd.SUB_SECTION_code ,sku.PARA1_code,sku.PARA2_code,sku.PARA3_code,sku.PARA4_code,sku.PARA5_code,sku.PARA6_code ,
+				   attr.ATTR1_KEY_CODE,attr.ATTR2_KEY_CODE,attr.ATTR3_KEY_CODE,attr.ATTR4_KEY_CODE,attr.ATTR5_KEY_CODE,attr.ATTR6_KEY_CODE,attr.ATTR7_KEY_CODE,
+				   attr.ATTR8_KEY_CODE,attr.ATTR9_KEY_CODE,attr.ATTR10_KEY_CODE,attr.ATTR11_KEY_CODE,attr.ATTR12_KEY_CODE,
+				   attr.ATTR13_KEY_CODE,attr.ATTR14_KEY_CODE,attr.ATTR15_KEY_CODE,attr.ATTR16_KEY_CODE,attr.ATTR17_KEY_CODE,attr.ATTR18_KEY_CODE,attr.ATTR19_KEY_CODE,
+				   attr.ATTR20_KEY_CODE,attr.ATTR21_KEY_CODE,attr.ATTR22_KEY_CODE,attr.ATTR23_KEY_CODE,attr.ATTR24_KEY_CODE,attr.ATTR25_KEY_CODE,A.ARTICLE_NAME,A.STOCK_NA,A.ARTICLE_ALIAS,
+				   A.SECTION_ALIAS,A.SUB_SECTION_ALIAS,
+				   isnull(A.PARA1_ALIAS,'''') as PARA1_ALIAS,
+				   isnull(A.PARA2_ALIAS,'''') as PARA2_ALIAS,
+				   isnull(A.PARA3_ALIAS,'''') as PARA3_ALIAS,
+				   isnull(A.PARA4_ALIAS,'''') as PARA4_ALIAS,
+				   isnull(A.PARA5_ALIAS,'''') as PARA5_ALIAS,
+				   isnull(A.PARA6_ALIAS,'''') as PARA6_ALIAS,
+				   isnull(A.SKU_ITEM_TYPE,1) as SKU_ITEM_TYPE,
+				   isnull(A.PARA2_ORDER,0) as PARA2_ORDER,
+				   hm.HSN_CODE, 
+				   isnull(TAXABLE_ITEM,1) as TAXABLE_ITEM, isnull(HSN_TYPE,0) as HSN_TYPE,isnull(sd.MFG_CATEGORY,0) as MFG_CATEGORY,isnull(UOM_TYPE,0) as UOM_TYPE,
+				   uom.UOM_CODE, uom.UOM_NAME,isnull(art.CODING_SCHEME,0) as CODING_SCHEME,art.discon ,art.GENERATE_BARCODES_WITHARTICLE_PREFIX,
+				   art.SKU_CODE,art.ARTICLE_DESC,art.GEN_EAN_CODES,art.ORDERITEM,isnull(sku.FIX_MRP,0) as FIX_MRP,isnull(sku.mrp,0) as mrp,sku.DT_CREATED,sku.WS_PRICE,sku.IMAGE_NAME,sku.TAX_AMOUNT,sku.CHALLAN_NO,
+				   sku.PRODUCT_NAME,sku.ER_FLAG,
+				   isnull(sku.UPLOADED_TO_ACTIVSTREAM,0) as UPLOADED_TO_ACTIVSTREAM,
+				   isnull(sku.BARCODE_CODING_SCHEME,0) as BARCODE_CODING_SCHEME,
+				   sku.EMP_CODE,sku.VENDOR_EAN_NO,sku.ONLINE_PRODUCT_CODE,isnull(sku.BASIC_PURCHASE_PRICE,0) as BASIC_PURCHASE_PRICE,
+				  isnull(sdattr.ATTR1_mst,0) as ATTR1_mst,isnull(sdattr.ATTR2_mst,0) as ATTR2_mst,isnull(sdattr.ATTR3_mst,0) as ATTR3_mst,isnull(sdattr.ATTR4_mst,0) as ATTR4_mst,
+				  isnull(sdattr.ATTR5_mst,0) as ATTR5_mst,
+				  isnull(sdattr.ATTR6_mst,0) as ATTR6_mst
+				,isnull(sdattr.ATTR7_mst,0) as ATTR7_mst,isnull(sdattr.ATTR8_mst,0) as ATTR8_mst,isnull(sdattr.ATTR9_mst,0) as ATTR9_mst,isnull(sdattr.ATTR10_mst,0) as ATTR10_mst,
+				isnull(sdattr.ATTR11_mst,0) as ATTR11_mst,isnull(sdattr.ATTR12_mst,0) as ATTR12_mst,
+				 isnull(sdattr.ATTR13_mst,0) as ATTR13_mst,isnull(sdattr.ATTR14_mst,0) as ATTR14_mst,isnull(sdattr.ATTR15_mst,0) as ATTR15_mst,isnull(sdattr.ATTR16_mst,0) as ATTR16_mst,
+				 isnull(sdattr.ATTR17_mst,0) as ATTR17_mst,isnull(sdattr.ATTR18_mst,0) as ATTR18_mst
+				,isnull(sdattr.ATTR19_mst,0) as ATTR19_mst,isnull(sdattr.ATTR20_mst,0) as ATTR20_mst,isnull(sdattr.ATTR21_mst,0) as ATTR21_mst,isnull(sdattr.ATTR22_mst,0) as ATTR22_mst,
+				isnull(sdattr.ATTR23_mst,0) as ATTR23_mst,isnull(sdattr.ATTR24_mst,0) as ATTR24_mst,isnull(sdattr.ATTR25_mst,0) as ATTR25_mst,
+				   '''+@LOCCTEMPTABLE+''' as Table_Name,'''+@LOCCTEMPTABLE+''' as Temp_Table_Name,'''' AS ERRMSG
+			FROM SKU  (NOLOCK) JOIN ARTICLE ART (NOLOCK) ON ART.ARTICLE_CODE =SKU.ARTICLE_CODE 
+			JOIN SECTIOND SD (NOLOCK) ON SD.SUB_SECTION_CODE =ART.SUB_SECTION_CODE 
+			JOIN SECTIONM SM (NOLOCK) ON SM.SECTION_CODE =SD.SECTION_CODE 
+			JOIN SKU_NAMES A (NOLOCK) ON SKU.PRODUCT_CODE=A.PRODUCT_CODE join uom (nolock) on uom.uom_code =art.uom_code 
+			LEFT JOIN ARTICLE_FIX_ATTR ATTR (NOLOCK) ON ATTR.ARTICLE_CODE =ART.ARTICLE_CODE 
+			LEFT JOIN HSN_MST HM (NOLOCK) ON HM.HSN_CODE =SKU.HSN_CODE 
+             left join SD_ATTR_AVATAR sdattr (nolock) on sdattr.SUB_SECTION_CODE=sd.sub_section_code  JOIN '+@CTEMPTABLE+' B (NOLOCK) ON B.CODE=A.PRODUCT_CODE 
+			where 1=2 '
+			
+		PRINT @CCMD
+		EXEC SP_EXECUTESQL @CCMD
+
+			 
+END TRY  
+	BEGIN CATCH  
+		SET @CERRMSG='P: SP3S_PREPARE_MASTER_HO_DATA_SKU, STEP: '+CAST(@CSTEP AS VARCHAR(5))+', MESSAGE: ' + ERROR_MESSAGE()
+		GOTO END_PROC  
+	END CATCH   
+
+END_PROC:
+    IF  ISNULL(@CERRMSG,'')<>'' 
+		SELECT ISNULL(@CERRMSG,'') AS ERRMSG
+	--ELSE 
+	--  BEGIN
+      
+ --     END
+END
+
+---END OF PROCEDURE - SP3S_PREPARE_MASTER_HO_DATA
+

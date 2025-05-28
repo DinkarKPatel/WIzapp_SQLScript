@@ -1,0 +1,18 @@
+CREATE PROCEDURE SP3S_GETIMAGE_LAST_UPDATE
+AS
+BEGIN
+	DECLARE @dtINV DATETIME,@dtImage DATETIME
+	DECLARE @cCMD NVARCHAR(MAX)
+	select @dtINV=MAX(inv_dt)  from pim01106(NOLOCK) where inv_id<>''
+--DECLARE @dtImage DATETIME
+	SET @cCMD=N'SELECT @dtImage=MAX(LAST_UPDATE)  FROM '+DB_NAME()+N'_IMAGE..image_info(NOLOCK)'
+	PRINT @cCMD
+	EXEC SP_EXECUTESQL @cCMD ,N'@dtImage DATETIME OUTPUT',@dtImage =@dtImage output
+	--SELECT @dtImage
+	SET @dtINV=ISNULL(@dtINV,'') 
+	SET @dtImage=ISNULL(@dtImage,'') 
+	IF @dtINV<=@dtImage
+		SELECT @dtINV AS LAST_UPDATE
+	ELSE 
+		SELECT @dtImage AS LAST_UPDATE
+END

@@ -1,0 +1,15 @@
+CREATE PROCEDURE SP_POSTSALES_JOB_WORK_ISSUE_5      
+(        
+  @IMODE INT ,        
+  @CWHERE VARCHAR(4000)='',    
+  @CAGENCYCODE CHAR(7)='',    
+  @BMODE BIT = 0 ,  
+  @FINYEAR VARCHAR(10)=''  ,  
+  @DEPTID VARCHAR(10)=''       
+)    
+----WITH ENCRYPTION        
+      
+AS        
+BEGIN 
+ SELECT * FROM PRD_AGENCY_MST (NOLOCK) WHERE  INACTIVE = 0 AND AGENCY_NAME <> ''     
+END

@@ -1,0 +1,58 @@
+CREATE PROCEDURE SPWOW_GENXPERT_REPDATA_IRR_PFI
+@cRepTempTable VARCHAR(400),
+@dFromDt DATETIME,
+@dToDt DATETIME,
+@cHoLocId VARCHAR(5)=''
+AS
+BEGIN
+	DECLARE @cXnType VARCHAR(10),@cCmd NVARCHAR(MAX),@cBaseExpr VARCHAR(MAX),@cBaseExprOutput VARCHAR(MAX),
+	@cGrpCols VARCHAR(MAX),	@cLayoutCols VARCHAR(MAX),@cJoinStr VARCHAR(MAX),@cInsCols VARCHAR(MAX)
+	
+
+	SELECT @cBaseExpr='[LAYOUT_COLS]   from [DATABASE].dbo.ird01106 ird01106 (NOLOCK)       
+	JOIN  [DATABASE].dbo.irm01106 irm01106 (NOLOCK)  ON ird01106.irm_memo_ID = irm01106.irm_memo_ID        
+	join SKU_NAMES (NOLOCK) ON sku_names.product_code=ird01106.NEW_PRODUCT_CODE
+	JOIN location SourceLocation (NOLOCK) ON SourceLocation.dept_id= irm01106.location_code/*LEFT(irm01106.irm_memo_id,2)*//*Rohit 05-11-2024*/
+	JOIN bin SourceBin on SourceBin.bin_id=ird01106.bin_id
+	JOIN LOC_NAMES (NOLOCK) on LOC_NAMES.dept_id=irm01106.location_code/*LEFT(irm01106.irm_memo_id,2)*//*Rohit 05-11-2024*/
+
+	    Left Outer join BARCODEWISE_EOSS_SCHEMES_INFO EOSSSCH (NOLOCK) ON EOSSSCH.location_id=irm01106.location_code/*LEFT(irm01106.irm_memo_id,2)*//*Rohit 05-11-2024*/
+	and EOSSSCH.PRoduct_code= SKU_NAMES.Product_Code
+
+	LEFT JOIN lm01106 oem_supplier_lm01106 on oem_supplier_lm01106.ac_code=sku_names.oem_ac_code
+		LEFT JOIN lmp01106 oem_supplier_lmp01106 on oem_supplier_lmp01106.ac_code=sku_names.oem_ac_code
+		LEFT JOIN area  oem_supplier_area on oem_supplier_lmp01106.area_code=oem_supplier_area.area_code
+		LEFT JOIN city  oem_supplier_city on oem_supplier_city.city_code=oem_supplier_area.city_code
+		LEFT JOIN state  oem_supplier_state on oem_supplier_state.state_code=oem_supplier_city.state_code
+
+	Left Outer  JOIN lmp01106 supplier_lmp01106 on supplier_lmp01106.ac_code=sku_names.ac_code
+	Left Outer JOIN area  supplier_area on supplier_lmp01106.area_code=supplier_area.area_code
+	Left Outer  JOIN city  supplier_city on supplier_city.city_code=supplier_area.city_code
+	Left Outer  JOIN state  supplier_state on supplier_state.state_code=supplier_city.state_code
+
+		
+LEFT OUTER JOIN  #skumrpcat   skumrpcat ON 1=1   AND SKU_NAMES.MRP BETWEEN skumrpcat.FROMN  AND skumrpcat.TON 
+
+	LEFT JOIN XN_ITEM_TYPE_DESC_mst (NOLOCK) on XN_ITEM_TYPE_DESC_mst.XN_ITEM_TYPE=1
+
+  	WHERE (irm01106.irm_memo_dt BETWEEN [DFROMDT] AND [DTODT]) AND ISNULL(new_product_code,'''')<>''''
+	 AND [WHERE]       
+	group by [GROUPBY]'
+
+	EXEC SPWOW_GETXPERT_INSCOLS
+	@cXntype='IRR_PFI',
+	@dFromDt=@dFromDt,
+	@dToDt=@dToDt,
+	@cHoLocId=@cHoLocId,
+	@cBaseExprInput=@cBaseExpr,
+	@cInsCols=@cInsCols OUTPUT,
+	@cBaseExprOutput=@cBaseExprOutput OUTPUT
+
+
+	SET @cCmd=N'INSERT INTO '+@cRepTempTable+' ('+@cInsCols+')
+				SELECT '+@cBaseExprOutput
+
+	PRINT @cCmd
+	EXEC SP_EXECUTESQL @cCmd
+
+END

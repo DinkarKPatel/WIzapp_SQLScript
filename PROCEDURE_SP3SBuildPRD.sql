@@ -1,0 +1,133 @@
+CREATE PROCEDURE SP3SBuildPRD
+(
+	 @cXnID			varchar(50)
+	,@nUpdateMode	numeric(2)
+    ,@cInsJoinStr   VARCHAR(1000)=''
+	,@cWhereclause	VARCHAR(1000)=''	
+	,@cErrMsg		varchar(max) output
+)
+AS
+BEGIN
+/*
+XnType Filter is required during deletion from RFOPT Table because in some cases like TRO From PIM01106
+,the inserted xn_id is that of wholesale invoice.
+*/
+	Declare @cCmd nvarchar(max),@cRFDBName VARCHAR(500),@cStep varchar(10),@cFilter varchar(1000),@cDelStr VARCHAR(1000),@cDelJoinStr VARCHAR(500)
+BEGIN TRY
+
+	DECLARE @bBuildRfopt BIT
+	
+	EXEC SP3S_CHKRFOPT_BUILD @bBuildRfopt OUTPUT
+	
+	IF @bBuildRfopt=0
+		RETURN
+		
+	EXEC SP3S_RFDBNAME @cRFDBName OUTPUT 
+	IF ISNULL(@cRFDBName,'')=''
+	SET @cRFDBName=DB_NAME()+'_RFOPT.DBO.'
+
+	IF @nUpdateMode=0
+	BEGIN
+		SET @CSTEP = 5
+		SET @CCMD=N'INSERT '+@CRFDBNAME+'RF_OPT(DEPT_ID,XN_TYPE,XN_DT,XN_NO,XN_ID,PRODUCT_CODE,
+				  XN_PARTY_CODE,XN_QTY,XN_NET,XN_DA,TAX_AMOUNT,BIN_ID,BATCHLOTNO)
+				  SELECT  LEFT(B.MEMO_ID,2) AS DEPT_ID,  
+						  ''PRD'' AS XN_TYPE,   
+						  B.MEMO_DT  AS XN_DT,   
+						  B.MEMO_NO  AS XN_NO,
+						  ''PRD''+B.MEMO_ID  AS XN_ID,      
+						  A.PRODUCT_CODE,  
+						  ''LOC'' + DEPT_ID AS XN_PARTY_CODE,  
+						   A.QUANTITY AS XN_QTY,  
+						   A.MRP AS XN_NET,  
+						   CONVERT(NUMERIC(10,2),0) AS XN_DA
+						   ,CONVERT(NUMERIC(10,2),0) AS TAX_AMOUNT  
+						   ,''000''  AS [BIN_ID],
+						   SUBSTRING(A.PRODUCT_CODE, NULLIF(CHARINDEX (''@'',A.PRODUCT_CODE)+1,1),LEN(A.PRODUCT_CODE))  AS BATCHLOTNO   
+				 FROM PRD_STK_TRANSFER_DTM_DET A(NOLOCK)
+				 JOIN PRD_STK_TRANSFER_DTM_MST B(NOLOCK) ON A.MEMO_ID = B.MEMO_ID   
+				 WHERE B.CANCELLED=0'
+		PRINT @CCMD 
+		EXEC SP_EXECUTESQL @CCMD
+		
+		GOTO EndProc
+	END
+	SET @cFilter=(CASE WHEN @nUpdateMode IN (0,4) THEN '1=1' ELSE 'b.MEMO_ID='''+@cXnID+'''' END)+@cWhereClause				   
+
+	SET @CSTEP = 10
+	IF @nUpdateMode<>1
+	BEGIN
+	
+	   IF @nUpdateMode=4 
+	   BEGIN
+	    SELECT @cDelStr=(CASE WHEN @nUpdateMode=4 THEN '1=1' ELSE 'A.XN_ID=''PRD''+'''+@cXnID+'''' END)+@cWhereClause,
+			   @cDelJoinStr=REPLACE(@cInsJoinstr,'xnnos.xn_id','''PRD''+xnnos.xn_id')
+			  
+		SET @cDelJoinStr=REPLACE(@cDelJoinStr,'b.receipt_id','a.xn_id')		   
+
+			
+	    SET @CCMD=N'DELETE A FROM '+@CRFDBNAME+'RF_OPT A '+@cDelJoinStr+' WHERE '+@cDelStr
+
+		PRINT @CCMD 
+		EXEC SP_EXECUTESQL @CCMD
+	END	
+	ELSE
+	IF @NUPDATEMODE=3
+	BEGIN
+		SET @CCMD=N'INSERT '+@CRFDBNAME+'RF_OPT(DEPT_ID,XN_TYPE,XN_DT,XN_NO,XN_ID,PRODUCT_CODE,
+				  XN_PARTY_CODE,XN_QTY,XN_NET,XN_DA,TAX_AMOUNT,BIN_ID,BATCHLOTNO)
+				  SELECT  LEFT(B.MEMO_ID,2) AS DEPT_ID,  
+						  ''PRD'' AS XN_TYPE,   
+						  B.MEMO_DT  AS XN_DT,   
+						  B.MEMO_NO  AS XN_NO,
+						  ''PRD''+B.MEMO_ID  AS XN_ID,      
+						  A.PRODUCT_CODE,  
+						  ''LOC'' + DEPT_ID AS XN_PARTY_CODE,  
+						   A.QUANTITY * -1 AS XN_QTY,  
+						   A.MRP AS XN_NET,  
+						   CONVERT(NUMERIC(10,2),0) AS XN_DA
+						   ,CONVERT(NUMERIC(10,2),0) AS TAX_AMOUNT  
+						   ,''000''  AS [BIN_ID],
+						   SUBSTRING(A.PRODUCT_CODE, NULLIF(CHARINDEX (''@'',A.PRODUCT_CODE)+1,1),LEN(A.PRODUCT_CODE)) AS BATCHLOTNO   
+				 FROM PRD_STK_TRANSFER_DTM_DET A(NOLOCK)
+				 JOIN PRD_STK_TRANSFER_DTM_MST B(NOLOCK) ON A.MEMO_ID = B.MEMO_ID '+@cInsJoinStr+'  
+				 WHERE B.CANCELLED=0 AND '+@cFilter
+		PRINT @CCMD 
+		EXEC SP_EXECUTESQL @CCMD
+	  END	
+	END
+	
+	IF @nUpdateMode<>3
+	BEGIN
+		SET @CSTEP = 20
+
+		SET @CCMD=N'INSERT '+@CRFDBNAME+'RF_OPT(DEPT_ID,XN_TYPE,XN_DT,XN_NO,XN_ID,PRODUCT_CODE,
+				  XN_PARTY_CODE,XN_QTY,XN_NET,XN_DA,TAX_AMOUNT,BIN_ID,BATCHLOTNO)
+				  SELECT  LEFT(B.MEMO_ID,2) AS DEPT_ID,  
+						  ''PRD'' AS XN_TYPE,   
+						  B.MEMO_DT  AS XN_DT,   
+						  B.MEMO_NO  AS XN_NO,
+						  ''PRD''+B.MEMO_ID  AS XN_ID,      
+						  A.PRODUCT_CODE,  
+						  ''LOC'' + DEPT_ID AS XN_PARTY_CODE,  
+						   A.QUANTITY AS XN_QTY,  
+						   A.MRP AS XN_NET,  
+						   CONVERT(NUMERIC(10,2),0) AS XN_DA
+						   ,CONVERT(NUMERIC(10,2),0) AS TAX_AMOUNT  
+						   ,''000''  AS [BIN_ID],
+						   SUBSTRING(A.PRODUCT_CODE, NULLIF(CHARINDEX (''@'',A.PRODUCT_CODE)+1,1),LEN(A.PRODUCT_CODE)) AS BATCHLOTNO   
+				 FROM PRD_STK_TRANSFER_DTM_DET A(NOLOCK)
+				 JOIN PRD_STK_TRANSFER_DTM_MST B(NOLOCK) ON A.MEMO_ID = B.MEMO_ID '+@cInsJoinStr+'  
+				 WHERE B.CANCELLED=0 AND '+@cFilter
+		PRINT @CCMD 
+		EXEC SP_EXECUTESQL @CCMD
+	END
+END TRY
+BEGIN CATCH
+	SET @cErrMsg='SP3SBuildPRD: Step :'+@cStep+',Error :'+ERROR_MESSAGE()
+END CATCH	
+
+EndProc:
+
+END
+--End of procedure - SP3SBuildPRD

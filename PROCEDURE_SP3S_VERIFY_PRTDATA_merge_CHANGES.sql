@@ -1,0 +1,95 @@
+create PROCEDURE SP3S_VERIFY_PRTDATA_MERGE_CHANGES
+@nSpId VARCHAR(50),
+@cMemoId VARCHAR(40)
+AS
+BEGIN
+	
+	DECLARE @CFILTERCONDITION VARCHAR(1000),@CINSSPID VARCHAR(40),@CJOINSTR VARCHAR(500),@cSuffix VARCHAR(20),
+	@CDESTTABLE VARCHAR(200),@cUploadTableName VARCHAR(200),@nSpIdCol VARCHAR(100)
+
+	SELECT @cSuffix='upload' ,@nSpIdCol='RM_ID'
+
+	PRINT 'gen tempdata for 1'
+	SET @CFILTERCONDITION=' b.RM_ID='''+@cMemoId+''''
+	set @CINSSPID=LEFT(@nSPId,38)+LEFT(@cMemoId,2)
+
+	SELECT @cUploadTableName='PRT_RMM01106_'+@cSuffix
+			
+	EXEC UPDATEMASTERXN_MIRROR @CSOURCEDB='',@CSOURCETABLE='RMM01106',@CDESTDB=''
+								,@CDESTTABLE=@cUploadTableName,@CKEYFIELD1='RM_ID',@CKEYFIELD2='',@CKEYFIELD3=''
+								,@LINSERTONLY=1,@CFILTERCONDITION=@CFILTERCONDITION,@LUPDATEONLY=0
+								,@BALWAYSUPDATE=0,@bUPDATEXNS=1,@CINSSPID=@CINSSPID,@CSEARCHTABLE='RMM01106',@cXnType='PRT'
+	
+	PRINT 'gen tempdata for 2'
+	EXEC SP3S_GENFILTERED_UPDATESTR
+	@cSpId=@nSpId ,
+	@cInsSpId=@cInsSpId,
+	@cTableName='RMM01106',
+	@cUploadTableName=@cUploadTableName,
+	@cKeyfield='RM_ID',
+	@bDonotChkLastUpdate=0
+	
+	
+	SELECT @cUploadTableName='PRT_RMD01106_'+@cSuffix
+
+	PRINT 'gen tempdata for 3'
+	EXEC UPDATEMASTERXN_MIRROR @CSOURCEDB='',@CSOURCETABLE='RMD01106',@CDESTDB=''
+								,@CDESTTABLE=@cUploadTableName,@CKEYFIELD1='RM_ID',@CKEYFIELD2='',@CKEYFIELD3=''
+								,@LINSERTONLY=1,@CFILTERCONDITION=@CFILTERCONDITION,@LUPDATEONLY=0,@cXnType='PRT'
+								,@BALWAYSUPDATE=0,@bUPDATEXNS=1,@CINSSPID=@CINSSPID,@CSEARCHTABLE='RMD01106'	
+	
+	PRINT 'gen tempdata for 4'
+	EXEC SP3S_GENFILTERED_UPDATESTR
+	@cSpId=@nSpId ,
+	@cInsSpId=@cInsSpId,
+	@cTableName='RMD01106',
+	@cUploadTableName=@cUploadTableName,
+	@cKeyfield='row_id',
+	@bDonotChkLastUpdate=1
+	
+
+	SELECT @cUploadTableName='PRT_PARCEL_MST_'+@cSuffix
+
+		
+	DECLARE @cParcelMemoId VARCHAR(50)
+	SELECT @cParcelMemoId=parcel_memo_id FROM prt_parcel_mst_upload (NOLOCK) WHERE sp_id=@nSpId
+	
+	set @cParcelMemoId=ISNULL(@cParcelMemoId,'')
+
+	SET @CFILTERCONDITION=' b.parcel_memo_id='''+@cParcelMemoId+''''
+
+	PRINT 'gen tempdata for 3'
+	EXEC UPDATEMASTERXN_MIRROR @CSOURCEDB='',@CSOURCETABLE='PARCEL_MST',@CDESTDB=''
+								,@CDESTTABLE=@cUploadTableName,@CKEYFIELD1='PARCEL_MEMO_ID',@CKEYFIELD2='',@CKEYFIELD3=''
+								,@LINSERTONLY=1,@CFILTERCONDITION=@CFILTERCONDITION,@LUPDATEONLY=0,@cXnType='PRT'
+								,@BALWAYSUPDATE=0,@bUPDATEXNS=1,@CINSSPID=@CINSSPID,@CSEARCHTABLE='PARCEL_MST'	
+	
+	PRINT 'gen tempdata for 4'
+	EXEC SP3S_GENFILTERED_UPDATESTR
+	@cSpId=@nSpId ,
+	@cInsSpId=@cInsSpId,
+	@cTableName='PARCEL_MST',
+	@cUploadTableName=@cUploadTableName,
+	@cKeyfield='PARCEL_MEMO_ID',
+	@bDonotChkLastUpdate=1
+
+
+	
+	SELECT @cUploadTableName='PRT_PARCEL_DET_'+@cSuffix
+
+	PRINT 'gen tempdata for 3'
+	EXEC UPDATEMASTERXN_MIRROR @CSOURCEDB='',@CSOURCETABLE='PARCEL_DET',@CDESTDB=''
+								,@CDESTTABLE=@cUploadTableName,@CKEYFIELD1='PARCEL_MEMO_ID',@CKEYFIELD2='',@CKEYFIELD3=''
+								,@LINSERTONLY=1,@CFILTERCONDITION=@CFILTERCONDITION,@LUPDATEONLY=0,@cXnType='PRT'
+								,@BALWAYSUPDATE=0,@bUPDATEXNS=1,@CINSSPID=@CINSSPID,@CSEARCHTABLE='PARCEL_DET'	
+	
+	PRINT 'gen tempdata for 4'
+	EXEC SP3S_GENFILTERED_UPDATESTR
+	@cSpId=@nSpId ,
+	@cInsSpId=@cInsSpId,
+	@cTableName='PARCEL_DET',
+	@cUploadTableName=@cUploadTableName,
+	@cKeyfield='ROW_ID',
+	@bDonotChkLastUpdate=1
+	
+END

@@ -1,0 +1,56 @@
+create PROCEDURE SP3S_UPDATE_WEIGHTED_VALUE_SLS
+AS
+BEGIN
+
+   IF NOT EXISTS (SELECT TOP 1 'U' FROM CONFIG WHERE CONFIG_OPTION ='RUN_SP3S_UPDATE_WEIGHTED_VALUE_SLS' AND VALUE='1')
+   BEGIN
+
+			UPDATE A SET  WeightedQtyBillCount= ABS(A.QUANTITY) /B.QUANTITY
+			FROM CMD01106 A (NOLOCK)
+			JOIN 
+			(
+			 SELECT A.CM_ID ,SUM(ABS(QUANTITY)) AS QUANTITY
+			 FROM CMD01106 A (NOLOCK)
+			 JOIN CMM01106 B (NOLOCK) ON A.cm_id =B.CM_ID
+			 WHERE B.CANCELLED =0
+			 GROUP BY A.CM_ID
+			 HAVING SUM(ABS(QUANTITY))<>0
+
+			) B ON A.cm_id =B.CM_ID 
+		    WHERE ISNULL(a.WeightedQtyBillCount,0)<>ROUND((ABS(A.QUANTITY) /B.QUANTITY),4)
+		   
+			UPDATE A SET  WeightedNRVBillCount= ABS(A.rfnet ) /B.rfnet
+			FROM CMD01106 A (NOLOCK)
+			JOIN 
+			(
+			 SELECT A.CM_ID ,SUM(ABS(A.rfnet )) AS rfnet 
+			 FROM CMD01106 A (NOLOCK)
+			 JOIN CMM01106 B (NOLOCK) ON A.cm_id =B.CM_ID
+			 WHERE B.CANCELLED =0
+			 GROUP BY A.CM_ID
+			 HAVING SUM(ABS(A.rfnet ))<>0
+
+			) B ON A.cm_id =B.CM_ID 
+		   
+		   WHERE ISNULL(a.WeightedNRVBillCount,0)<>ROUND(ABS(A.rfnet ) /B.rfnet,4)
+         
+         IF EXISTS ( SELECT TOP 1 'U' FROM CONFIG WHERE CONFIG_OPTION ='RUN_SP3S_UPDATE_WEIGHTED_VALUE_SLS')
+            UPDATE A SET VALUE ='1' FROM CONFIG A WHERE CONFIG_OPTION ='RUN_SP3S_UPDATE_WEIGHTED_VALUE_SLS'
+         else
+         begin
+              PRINT ' INSERT STATEMENT RUN_SP3S_UPDATE_WEIGHTED_VALUE_SLS'
+              
+              INSERT config	( config_option, CTRL_NAME, Description, GROUP_NAME, last_update, OPT_SR_NO, REMARKS, row_id, SET_AT_HO, value, VALUE_TYPE )
+              SELECT 	'RUN_SP3S_UPDATE_WEIGHTED_VALUE_SLS'  config_option,null CTRL_NAME,'RUN_SP3S_UPDATE_WEIGHTED_VALUE_SLS' Description, 
+              'SLS' GROUP_NAME,GETDATE() last_update,0 OPT_SR_NO,'RUN_SP3S_UPDATE_WEIGHTED_VALUE_SLS' REMARKS,NEWID() row_id,0 SET_AT_HO,'1' value, 
+              'Boolean' VALUE_TYPE 
+
+         
+         end
+     
+     end 
+
+
+ END
+ 
+ 

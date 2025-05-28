@@ -1,0 +1,369 @@
+create Procedure Sp3s_Cal_FreightAmount--(LocId 3 digit change by Sanjay:04-11-2024)
+(
+  @cPARCEL_MEMO_ID varchar(50),
+  @NSPID varchar(50),
+  @CERRORMSG varchar(1000) output 
+)
+as 
+begin
+     Declare @CSTEP varchar(10),@CURSTATE_CODE varCHAR(4)
+
+  BEGIN TRY 
+     
+	 set @CSTEP='00'
+
+	 
+
+	 DELETE A FROM PRCL_FREIGHT_UPLOAD  A (NOLOCK)
+	 JOIN(
+
+	 SELECT A.REF_MEMO_ID 
+	 FROM PRCL_FREIGHT_UPLOAD  A
+	 JOIN PRCL_FREIGHT_UPLOAD B  ON A.REF_MEMO_ID =B.REF_MEMO_ID and a.sp_id=b.sp_id
+	 WHERE B.SP_ID=@NSPID AND ISNULL(B.NEWENTRY,0)=0   AND ISNULL(a.NEWENTRY,0)=1
+	 and ( a.FREIGHT_HSN_CODE=b.FREIGHT_HSN_CODE and  a.FREIGHT_GST_PERCENTAGE=b.FREIGHT_GST_PERCENTAGE
+	 and  a.FREIGHT_AMOUNT=b.FREIGHT_AMOUNT)
+	 ) B ON A.REF_MEMO_ID=B.REF_MEMO_ID
+
+
+	 Declare @cxntype varchar(10)
+
+
+	SELECT A.XN_TYPE,A.FREIGHT_AMOUNT,
+	        A.FREIGHT_HSN_CODE,
+	        A.FREIGHT_GST_PERCENTAGE,
+	       A.REF_MEMO_ID ,
+		   CAST(0 AS BIT) AS ISIGST,A.CANCELLED ,l.gst_state_code AS CURSTATE_CODE
+	 into #tmpFreight
+	FROM PRCL_FREIGHT_UPLOAD  A
+	JOIN LOCATION L (NOLOCK) ON L.DEPT_ID=a.location_code
+	WHERE SP_ID=@NSPID AND ISNULL(NEWENTRY,0)=1
+
+	if Exists (select top 1 'u' from PRCL_FREIGHT_UPLOAD a  WHERE SP_ID=@NSPID AND ISNULL(NEWENTRY,0)=0)
+	begin
+	     
+
+		 insert into #tmpFreight(XN_TYPE,FREIGHT_AMOUNT,FREIGHT_HSN_CODE,FREIGHT_GST_PERCENTAGE,REF_MEMO_ID,ISIGST,CANCELLED,CURSTATE_CODE)
+		 SELECT A.XN_TYPE,0 as FREIGHT_AMOUNT,
+	        A.FREIGHT_HSN_CODE,
+	        A.FREIGHT_GST_PERCENTAGE,
+	       A.REF_MEMO_ID ,
+		   CAST(0 AS BIT) AS ISIGST,A.CANCELLED ,l.gst_state_code AS CURSTATE_CODE
+		FROM PRCL_FREIGHT_UPLOAD  A
+		left join #TMPFREIGHT tmp on a.ref_memo_id=tmp.ref_memo_id
+		JOIN LOCATION L (NOLOCK) ON L.DEPT_ID=a.location_code
+		WHERE SP_ID=@NSPID AND ISNULL(NEWENTRY,0)=0 and tmp.ref_memo_id is null
+
+		
+
+
+
+
+	end
+
+
+
+
+	if exists (select top 1'u' from #tmpFreight group by REF_MEMO_ID having count(*)>1)
+	begin
+	    SET @CERRORMSG = 'Duplicate memo found Please check  '
+	    GOTO END_PROC
+
+	end
+
+
+	set @CSTEP='20'
+	if exists (select top 1'u' from #tmpFreight)
+	begin
+
+	     SELECT TOP 1 @CXNTYPE =XN_TYPE ,@CURSTATE_CODE =CURSTATE_CODE FROM #TMPFREIGHT
+
+		IF  @CXNTYPE ='PRT'
+		BEGIN 
+	     
+			 DELETE A FROM #TMPFREIGHT A
+			 JOIN RMM01106 B (NOLOCK) ON A.REF_MEMO_ID =B.RM_ID 
+			 WHERE A.XN_TYPE ='PRT' AND ISNULL(B.IRN_QR_CODE,'')<>''
+
+
+
+		END
+		ELSE IF  @CXNTYPE ='WSL'
+		BEGIN
+		     
+			
+			 DELETE A FROM #TMPFREIGHT A
+			 JOIN INM01106 B (NOLOCK) ON A.REF_MEMO_ID =B.INV_ID 
+			 WHERE A.XN_TYPE ='WSL' AND ISNULL(B.IRN_QR_CODE,'')<>''
+
+		
+
+
+		END
+
+	
+
+		set @CSTEP='40'
+		 DELETE FROM GST_TAXINFO_CALC_OH  WITH (ROWLOCK) WHERE SP_ID=LTRIM(RTRIM((@NSPID)))
+		 INSERT GST_TAXINFO_CALC_OH	(MEMO_ID,SP_ID, FREIGHT,OH_TAX_METHOD,FREIGHT_HSN_CODE,isIgst ,freight_gst_percentage ,MANUAL_GST_PER_FREIGHT )
+		 SELECT Ref_memo_id, LTRIM(RTRIM((@NSPID)))	 SP_ID, FREIGHT_AMOUNT,1 AS OH_TAX_METHOD ,FREIGHT_HSN_CODE AS FREIGHT_HSN_CODE,
+		        isIgst as isIgst,freight_gst_percentage,1 as MANUAL_GST_PER_FREIGHT
+		 FROM #tmpFreight
+		
+                   
+          PRINT 'OVER HEAD GST CALCULATED-STARTED' 
+            EXEC SP3S_GST_TAX_CAL_OH @CXNTYPE,@NSPID,1,'','','','',@CERRORMSG OUTPUT
+          PRINT 'OVER HEAD GST CALCULATED-FINISHED' 
+
+		  IF ISNULL(@CERRORMSG,'')<>''
+              GOTO END_PROC    
+			  
+        IF  @CXNTYPE ='PRT'
+		BEGIN 
+	        
+		   
+			 update a set isIgst=1 
+			 from GST_TAXINFO_CALC_OH a
+			 join Rmm01106 b (nolock) on a.memo_id=b.rm_id
+			 where B.PARTY_STATE_CODE<>@CURSTATE_CODE
+
+
+		END
+		ELSE IF  @CXNTYPE ='WSL'
+		BEGIN
+		     
+		
+			 update a set isIgst=1 
+			 from GST_TAXINFO_CALC_OH a
+			 join inm01106 b (nolock) on a.memo_id=b.inv_id
+			 where  B.PARTY_STATE_CODE<>@CURSTATE_CODE
+
+
+		END
+		
+
+		set @CSTEP='60'
+
+	    IF  @CXNTYPE ='PRT'
+		BEGIN 
+	     
+			UPDATE a SET  freight_hsn_code=ISNULL(b.freight_hsn_code,'0000000000'),
+			freight_gst_percentage=ISNULL(b.freight_gst_percentage,0),
+			freight_taxable_value=b.freight_taxable_value,
+			freight_igst_amount=(CASE WHEN ISNULL(isIgst,0)=1 THEN b.freight_gst_amount ELSE 0 END),
+			freight_cgst_amount=(CASE WHEN ISNULL(isIgst,0)=0 THEN b.freight_gst_amount/2 ELSE 0 END),
+			freight_sgst_amount=(CASE WHEN ISNULL(isIgst,0)=0 THEN b.freight_gst_amount/2 ELSE 0 END),
+			freight=b.freight_taxable_value,MANUAL_GST_PER_FREIGHT=1
+			FROM rmm01106   a WITH (ROWLOCK)
+			JOIN
+			(SELECT * FROM  gst_taxinfo_calc_oh (NOLOCK) WHERE sp_id=rtrim(ltrim(@NSPID))) b on a.rm_id=b.MEMO_ID
+
+
+				UPDATE A SET ROUND_OFF= (ROUND((SUBTOTAL +ISNULL(EXCLTAX,0) +isnull(GSTCESSAMOUNT,0)+  OTHER_CHARGES + 
+		            CASE WHEN OH_TAX_METHOD=2 THEN 0 ELSE  ISNULL(OTHER_CHARGES_IGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_CGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_SGST_AMOUNT,0)+ISNULL(FREIGHT_IGST_AMOUNT,0)+ISNULL(FREIGHT_CGST_AMOUNT,0)+ISNULL(FREIGHT_SGST_AMOUNT,0) END +
+					 FREIGHT+EXCISEDUTY ) - DISCOUNT_AMOUNT,0)-
+					 (SUBTOTAL+ISNULL(EXCLTAX,0)+isnull(GSTCESSAMOUNT,0)+OTHER_CHARGES+
+					 CASE WHEN OH_TAX_METHOD=2 THEN 0 ELSE ISNULL(OTHER_CHARGES_IGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_CGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_SGST_AMOUNT,0)+ISNULL(FREIGHT_IGST_AMOUNT,0)+ISNULL(FREIGHT_CGST_AMOUNT,0)+ISNULL(FREIGHT_SGST_AMOUNT,0) END +
+					 FREIGHT-DISCOUNT_AMOUNT+EXCISEDUTY))
+			FROM Rmm01106 A (NOLOCK)
+			JOIN 
+			(
+			  SELECT rm_id,
+			         EXCLTAX=SUM(case when BILL_LEVEL_TAX_METHOD=1 then isnull(ITEM_TAX_AMOUNT,0)+ISNULL(IGST_AMOUNT,0)+ISNULL(CGST_AMOUNT,0)+ISNULL(SGST_AMOUNT,0)+ISNULL(CESS_AMOUNT,0) else 0 end),
+		             EXCISEDUTY=isnull(SUM(EXCISE_DUTY_AMOUNT),0),
+					 GSTCESSAMOUNT=SUM(case when BILL_LEVEL_TAX_METHOD=1 then ISNULL(Gst_cess_amount,0) else 0 end )
+			  FROM rmd01106 A (NOLOCK)
+			  JOIN  #TMPFREIGHT B  (NOLOCK) ON A.rm_id=B.ref_memo_id
+			  GROUP BY rm_id
+
+			) rmd ON rmd.rm_id =A.rm_id
+			JOIN  #TMPFREIGHT B  (NOLOCK) ON A.rm_id=B.ref_memo_id
+			WHERE  MANUAL_ROUNDOFF=0 
+		
+			
+		set @CSTEP='80'
+		
+		UPDATE a SET TOTAL_AMOUNT=(SUBTOTAL +ISNULL(EXCLTAX,0) +isnull(GSTCESSAMOUNT,0)+  OTHER_CHARGES + 
+		CASE WHEN OH_TAX_METHOD=2 THEN 0 ELSE  ISNULL(OTHER_CHARGES_IGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_CGST_AMOUNT,0)+
+		ISNULL(OTHER_CHARGES_SGST_AMOUNT,0)+ISNULL(FREIGHT_IGST_AMOUNT,0)+ISNULL(FREIGHT_CGST_AMOUNT,0)+
+		ISNULL(FREIGHT_SGST_AMOUNT,0) END + FREIGHT+ROUND_OFF) - DISCOUNT_AMOUNT+EXCISEDUTY,
+		last_update=getdate()
+		FROM Rmm01106 A (NOLOCK)
+		JOIN 
+			(
+			  SELECT rm_id,
+			         EXCLTAX=SUM(case when BILL_LEVEL_TAX_METHOD=1 then isnull(ITEM_TAX_AMOUNT,0)+ISNULL(IGST_AMOUNT,0)+ISNULL(CGST_AMOUNT,0)+ISNULL(SGST_AMOUNT,0)+ISNULL(CESS_AMOUNT,0) else 0 end),
+		             EXCISEDUTY=isnull(SUM(EXCISE_DUTY_AMOUNT),0),
+					 GSTCESSAMOUNT=SUM(case when BILL_LEVEL_TAX_METHOD=1 then ISNULL(Gst_cess_amount,0) else 0 end )
+			  FROM rmd01106 A (NOLOCK)
+			  JOIN  #TMPFREIGHT B  (NOLOCK) ON A.rm_id=B.ref_memo_id
+			  GROUP BY rm_id
+
+		) rmd ON rmd.rm_id =A.rm_id
+		JOIN  #TMPFREIGHT B  (NOLOCK) ON A.rm_id=B.ref_memo_id
+		
+
+
+
+
+		END
+		ELSE IF  @CXNTYPE ='WSL'
+		BEGIN
+		    
+			set @CSTEP='100'
+			declare @nTotalCustomDuty NUMERIC(10,2)
+			set @nTotalCustomDuty=0
+
+			UPDATE a SET  freight_hsn_code=ISNULL(b.freight_hsn_code,'0000000000'),
+			freight_gst_percentage=ISNULL(b.freight_gst_percentage,0),
+			freight_taxable_value=b.freight_taxable_value,
+			freight_igst_amount=(CASE WHEN ISNULL(isIgst,0)=1 THEN b.freight_gst_amount ELSE 0 END),
+			freight_cgst_amount=(CASE WHEN ISNULL(isIgst,0)=0 THEN b.freight_gst_amount/2 ELSE 0 END),
+			freight_sgst_amount=(CASE WHEN ISNULL(isIgst,0)=0 THEN b.freight_gst_amount/2 ELSE 0 END),
+			freight=b.freight_taxable_value,MANUAL_GST_PER_FREIGHT=1
+			FROM inm01106  a WITH (ROWLOCK)
+			JOIN
+			(SELECT * FROM  gst_taxinfo_calc_oh (NOLOCK) WHERE sp_id=rtrim(ltrim(@NSPID))) b on a.inv_id=b.MEMO_ID
+
+			set @CSTEP='120'
+
+			UPDATE A SET ROUND_OFF=ROUND((SUBTOTAL + (CASE WHEN BILL_LEVEL_TAX_METHOD=1 THEN ISNULL(TAX,0)+ISNULL(GSTCESSAMOUNT,0) ELSE 0 END)+ISNULL(TCS_AMOUNT,0)+
+				(CASE WHEN a.OH_TAX_METHOD=2 THEN 0 ELSE 
+				         ISNULL(ISNULL(FREIGHT_IGST_AMOUNT,0)+ISNULL(FREIGHT_CGST_AMOUNT,0)+ISNULL(FREIGHT_SGST_AMOUNT,0)
+						+ISNULL(OTHER_CHARGES_IGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_CGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_SGST_AMOUNT,0)
+						+ISNULL(INSURANCE_IGST_AMOUNT,0)+ISNULL(INSURANCE_CGST_AMOUNT,0)+ISNULL(INSURANCE_SGST_AMOUNT,0)
+						+ISNULL(PACKING_IGST_AMOUNT,0)+ISNULL(PACKING_CGST_AMOUNT,0)+ISNULL(PACKING_SGST_AMOUNT,0),0) 
+						 END)
+				+OTHER_CHARGES+EXCISE_DUTY_AMOUNT+EXCISE_EDU_CESS_AMOUNT+EXCISE_HEDU_CESS_AMOUNT+FREIGHT+INSURANCE+@NTOTALCUSTOMDUTY ) - DISCOUNT_AMOUNT,0)-
+				(SUBTOTAL+(CASE WHEN BILL_LEVEL_TAX_METHOD=1 THEN ISNULL(TAX,0)+ISNULL(GSTCESSAMOUNT,0) ELSE 0 END)+ISNULL(TCS_AMOUNT,0)+OTHER_CHARGES+FREIGHT+
+				(CASE WHEN a.OH_TAX_METHOD=2 THEN 0 ELSE 
+				  ISNULL(ISNULL(FREIGHT_IGST_AMOUNT,0)+ISNULL(FREIGHT_CGST_AMOUNT,0)+ISNULL(FREIGHT_SGST_AMOUNT,0)
+						+ISNULL(OTHER_CHARGES_IGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_CGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_SGST_AMOUNT,0)
+						+ISNULL(INSURANCE_IGST_AMOUNT,0)+ISNULL(INSURANCE_CGST_AMOUNT,0)+ISNULL(INSURANCE_SGST_AMOUNT,0)
+						+ISNULL(PACKING_IGST_AMOUNT,0)+ISNULL(PACKING_CGST_AMOUNT,0)+ISNULL(PACKING_SGST_AMOUNT,0),0) 
+				  
+				  END) +
+				EXCISE_DUTY_AMOUNT+EXCISE_EDU_CESS_AMOUNT+EXCISE_HEDU_CESS_AMOUNT+@NTOTALCUSTOMDUTY-DISCOUNT_AMOUNT+INSURANCE)
+				
+			FROM INM01106 A (NOLOCK)
+			JOIN 
+			(
+			  SELECT INV_ID,
+			         TAX=SUM(ITEM_TAX_AMOUNT+ISNULL(IGST_AMOUNT,0)+ISNULL(CGST_AMOUNT,0)+ISNULL(SGST_AMOUNT,0)+ISNULL(CESS_AMOUNT,0)),
+		             GSTCESSAMOUNT=SUM(ISNULL(GST_CESS_AMOUNT,0))
+			   
+			  FROM IND01106 A (NOLOCK)
+			  JOIN  #TMPFREIGHT B  (NOLOCK) ON A.INV_ID=B.ref_memo_id
+			  GROUP BY INV_ID
+
+			) IND ON IND.INV_ID =A.INV_ID
+			JOIN  #TMPFREIGHT B  (NOLOCK) ON A.INV_ID=B.ref_memo_id
+			WHERE  MANUAL_ROUNDOFF=0
+
+			update a set NET_AMOUNT=(SUBTOTAL +(CASE WHEN BILL_LEVEL_TAX_METHOD=1 THEN ISNULL(TAX,0)+isnull(GSTCESSAMOUNT,0) ELSE 0 END) +
+			(CASE WHEN a.oh_tax_method=2 THEN 0 ELSE 
+			ISNULL(ISNULL(FREIGHT_IGST_AMOUNT,0)+ISNULL(FREIGHT_CGST_AMOUNT,0)+ISNULL(FREIGHT_SGST_AMOUNT,0)
+						+ISNULL(OTHER_CHARGES_IGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_CGST_AMOUNT,0)+ISNULL(OTHER_CHARGES_SGST_AMOUNT,0)
+						+ISNULL(INSURANCE_IGST_AMOUNT,0)+ISNULL(INSURANCE_CGST_AMOUNT,0)+ISNULL(INSURANCE_SGST_AMOUNT,0)
+						+ISNULL(PACKING_IGST_AMOUNT,0)+ISNULL(PACKING_CGST_AMOUNT,0)+ISNULL(PACKING_SGST_AMOUNT,0),0) 
+			
+			END)+isnull(TCS_AMOUNT,0) +  OTHER_CHARGES + FREIGHT+EXCISE_DUTY_AMOUNT+
+			EXCISE_EDU_CESS_AMOUNT+EXCISE_HEDU_CESS_AMOUNT+ROUND_OFF+OCTROI_AMOUNT+@nTotalCustomDuty)-DISCOUNT_AMOUNT+INSURANCE,
+			last_update=getdate()
+			FROM INM01106 A (NOLOCK)
+			JOIN 
+			(
+			  SELECT INV_ID,
+			         TAX=SUM(ITEM_TAX_AMOUNT+ISNULL(IGST_AMOUNT,0)+ISNULL(CGST_AMOUNT,0)+ISNULL(SGST_AMOUNT,0)+ISNULL(CESS_AMOUNT,0)),
+		             GSTCESSAMOUNT=SUM(ISNULL(GST_CESS_AMOUNT,0))
+			  FROM IND01106 A (NOLOCK)
+			  JOIN  #TMPFREIGHT B  (NOLOCK) ON A.INV_ID=B.ref_memo_id
+			  GROUP BY INV_ID
+
+			) IND ON IND.INV_ID =A.INV_ID
+			JOIN  #TMPFREIGHT B  (NOLOCK) ON A.INV_ID=B.ref_memo_id
+			WHERE MANUAL_ROUNDOFF=0
+
+
+
+		END
+
+		lblRecalPaymodeAmt:
+
+		set @CSTEP='140'
+
+		if @cxntype='WSL'
+		begin
+		     
+			 
+			SELECT A.INV_ID ,A.NET_AMOUNT , c.PAYMODE_AMOUNT,DIff_Amount=A.NET_AMOUNT-c.PAYMODE_AMOUNT
+			     into #tmppaymode
+			FROM INM01106 A
+			JOIN  #TMPFREIGHT B  (NOLOCK) ON A.INV_ID=B.ref_memo_id
+			JOIN
+			(
+			  SELECT MEMO_ID ,
+			      SUM(AMOUNT) AS PAYMODE_AMOUNT 
+			  FROM PAYMODE_XN_DET A
+			  join #TMPFREIGHT b on a.memo_id =b.REF_MEMO_ID
+			  WHERE a.XN_TYPE ='WSL'
+			  GROUP BY MEMO_ID
+			) c ON A.INV_ID =c.MEMO_ID 
+			where A.NET_AMOUNT <>c.PAYMODE_AMOUNT
+
+
+			;with cte as 
+			(
+			   select a.*,
+			        Sr=row_number() over (partition by a.memo_id order by case when a.paymode_code ='0000000' then 0 else 1 end ),
+					b.DIff_Amount
+			   from paymode_xn_det A (nolock)
+			   join #tmppaymode b on a.memo_id =b.inv_id 
+			   where a.xn_type='WSL'
+
+			)
+			UPDATE A SET AMOUNT=a.amount+isnull(b.DIff_Amount,0)
+			FROM PAYMODE_XN_DET A (NOLOCK) 
+			JOIN CTE B ON A.MEMO_ID =B.MEMO_ID
+			WHERE A.XN_TYPE ='WSL' AND B.SR=1
+
+
+		end
+
+		set @CSTEP='160'
+		lblRecalrfnet:
+
+		declare @cmemo_id varchar(50)
+		while exists (select top 1'u' from #tmpFreight)
+		begin
+		     
+			 select top 1 @cmemo_id=REF_MEMO_ID,@CXNTYPE=xn_type  from #tmpFreight
+
+			 if @CXNTYPE='wsl'
+			   EXEC SP3S_UPDATERFNET_wsl @cmemo_id
+			  else if  @CXNTYPE='PRT'
+			   EXEC SP3S_UPDATERFNET_prt @cmemo_id
+
+			delete from #tmpFreight where REF_MEMO_ID=@cmemo_id
+		end
+
+
+		
+
+
+	end
+
+
+
+
+
+  END TRY  
+  BEGIN CATCH
+  print 'enter catch of Sp3s_Cal_FreightAmount'
+   SELECT @CERRORMSG='ERROR MESSAGE IN PROCEDURE Sp3s_Cal_FreightAmount STEP#'+@CSTEP+' '+CAST(ERROR_MESSAGE() AS VARCHAR(1000))
+   PRINT 'ENTER CATCH IN Sp3s_Cal_FreightAmount line#'+error_message()
+  END CATCH  
+  END_PROC:
+
+
+end

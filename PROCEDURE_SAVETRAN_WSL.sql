@@ -1,0 +1,2322 @@
+create PROCEDURE SAVETRAN_WSL
+(
+	@NUPDATEMODE		NUMERIC(2,0),
+	@NSPID				VARCHAR(40)='',
+	@CMEMONOPREFIX		VARCHAR(50)='',
+	@CFINYEAR			VARCHAR(10)='',
+	@CMACHINENAME		VARCHAR(100)='',
+	@CWINDOWUSERNAME	VARCHAR(100)='',
+	@CWIZAPPUSERCODE	VARCHAR(10)='0000000',
+	@CMEMOID			VARCHAR(40)='',
+	@NBOXNO				NUMERIC(3,0)=0,
+	@CPRODUCTCODE		VARCHAR(50)='',
+	@NAPPROVEMODE		NUMERIC(1,0)=0,
+	@CCOMPUTERIP		VARCHAR(20)='',
+	@CPSNO				VARCHAR(50)='',
+	@EDIT_CLICKED	    BIT=0,
+	@CurrentStockAtRsp  NUMERIC(14,2)=0,
+	@MaxStockAtRsp      NUMERIC(14,2)=0,
+	@BFLAG              BIT=0,
+	@NBOXUPDATEMODE		NUMERIC(3,0)=0,
+	@bCalledFromExcelImport BIT=0,
+    @bcallfrompackslip bit=0,
+	@bcheckcreditlimit bit=0,
+	@NLEDGER_BALANCE NUMERIC(14,2)=0,
+	@dMemoDtPara					DATETIME='',
+	@NPARTY_AMOUNT_FORTCS NUMERIC(18,2)=0,
+	@NLOGINSPID NUMERIC(5,0)=0,
+	@BALLOWNEGSTOCK bit =0,
+	@BEStimatePrint bit =0
+)
+AS 
+BEGIN
+
+
+ --  if @@spid=1539
+	--return
+--SET @NBOXUPDATEMODE=0
+	-- @NUPDATEMODE:	1- NEW WHOLESALE BOX ADDED, 
+	--					2- EDIT A GIVEN BOX
+	--					3- CURRENT MEMO CANCELLED, 
+	--					4- DELETE AN EXISTING BOX
+	--					5- DELETE AN EXISTING ITEM IN ALL BOXES
+	--					10- DELETE A SELECTED CREDIT NOTE FROM WHOLESALE INVOICE
+	--                  15 - Insert data into upload xns and doc tables 
+
+	SET @EDIT_CLICKED=ISNULL(@EDIT_CLICKED,0)
+	DECLARE @CTEMPDBNAME			VARCHAR(100),
+			@CMASTERTABLENAME		VARCHAR(100),
+			@CDETAILTABLENAME1		VARCHAR(100),
+			@CDETAILTABLENAME2		VARCHAR(100),		
+			@CTEMPMASTERTABLENAME	VARCHAR(100),
+			@CTEMPDETAILTABLENAME1	VARCHAR(100),
+			@CTEMPDETAILTABLENAME2	VARCHAR(100),			
+			@CTEMPMASTERTABLE		VARCHAR(100),
+			@CTEMPDETAILTABLE1		VARCHAR(100),
+			@CTEMPDETAILTABLE2		VARCHAR(100),			
+			@CERRORMSG				VARCHAR(MAX),
+			@LDONOTUPDATESTOCK		BIT,
+			@CKEYFIELD1				VARCHAR(50),
+			@CKEYFIELDVAL1			VARCHAR(50),
+			@CMEMONO				VARCHAR(20),
+			@NMEMONOLEN				NUMERIC(20,0),
+			@CMEMONOVAL				VARCHAR(50),
+			@CMEMODEPTID			VARCHAR(2),
+			@CLOCATIONID			VARCHAR(4),
+			@CHODEPTID				VARCHAR(4),
+			@CCMD					NVARCHAR(4000),
+			@CCMDOUTPUT				NVARCHAR(4000),
+			@NSAVETRANLOOP			BIT,@bReUpdateAllInd BIT,
+			@cSTEP					VARCHAR(10),
+			@LENABLETEMPDATABASE	BIT,
+			@bOrderValidationFailed	 BIT,
+			@BNEGSTOCKFOUND BIT,
+			@CMSG					VARCHAR(MAX),
+			@BPURLOC BIT,@cExistingRow VARCHAR(40),@bCalledFromRepickRate BIT,
+			@CPSID					VARCHAR(40),
+			@CREFAPPMEMOID			VARCHAR(40),
+			@CAPRMEMOID VARCHAR(40),
+			@BGENERATEAUTOSERIES    BIT,
+			@CTARGETLOCID			VARCHAR(4),
+			@CDEPT_ID CHAR(4),
+			@NTARGETLOCTYPE			INT	,@bGstBill BIT,@cMissingRowId VARCHAR(50),
+			@NSOURCELOCTYPE INT,
+			@NMODE INT,@BTARGETPURLOC BIT,@DSTARTDT DATETIME,@cMemoPrefixDefined VARCHAR(20),
+			@bUserPrefixasInitial BIT,@bEnforcebillingrules BIT,@nTotalCustomDuty NUMERIC(10,2),
+			@CDETAILTABLENAME3 VARCHAR(100),@CTEMPDETAILTABLENAME3 VARCHAR(100),@CTEMPDETAILTABLE3 VARCHAR(100),
+			@CDETAILTABLENAME5 VARCHAR(100),@CTEMPDETAILTABLENAME5 VARCHAR(100),@CTEMPDETAILTABLE5 VARCHAR(100),
+			@CHKSTOCKUSERCODE VARCHAR(25),@dInvDt DATETIME,
+			@NENTRYMODE NUMERIC(1),@BIS_BIN_TRANSFER BIT,@CTARGET_BIN VARCHAR(3),@DSTARTTIME DATETIME,
+			@CTEMPDETAILTABLE4 VARCHAR(100),@CTEMPDETAILTABLENAME4 VARCHAR(100),
+			@cPrefixYearCodeSisLoc VARCHAR(2),@bTargetSisLoc BIT,
+			@CGSTCUTOFFDATE VARCHAR(20),@cPartyStatecode VARCHAR(5),@bGroupInv BIT,@cErrProductCode VARCHAR(50),
+			@cPartyCode CHAR(10),@ERP_CONFIG VARCHAR(10),
+			@NLOCREGISTER numeric(5,0),@cMemoPrefixProc VARCHAR(25),@cXnTypePara VARCHAR(10),
+			@CurrentBIllStockAtRsp  NUMERIC(14,2),@BStockRspLimitCrossed bit =0,@LUPDATEONLY BIT,
+			@BCREDITLimitCrossed bit,@cStepMsg varchar(400),@NXNITEMTYPE int,
+			@CxnBoxDetails varchar(100),@CTEMPXNBOXDETAILSNAME varchar(100),@CTEMPxnBoxDetails varchar(100),@CLOCID	VARCHAR(4)
+	
+	BEGIN TRY
+
+		SET @cStep = 2		-- SETTTING UP ENVIRONMENT
+
+		set @cStepMsg=(case when @bCalledFromExcelImport=1 then 'import' else 'direct' end)
+
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,@cStepMsg,1
+		
+		SET @bOrderValidationFailed=0
+
+		IF @EDIT_CLICKED=1	
+		BEGIN
+			DECLARE @COL VARCHAR(MAX)
+			SET @COL='IF OBJECT_ID(''tempdb..[##INM_'+@NSPID+'_'+@CMEMOID+']'',''U'') IS NOT NULL'+CHAR(13)+' DROP TABLE [##INM_'+@NSPID+'_'+@CMEMOID+'];'+CHAR(13)+'SELECT INV_ID OLD_INV_ID,INV_ID NEW_INV_ID,'
+			SELECT @COL=COALESCE(@COL,'')+FIELD_NAME+' OLD_'+FIELD_NAME+','+FIELD_NAME+' NEW_'+FIELD_NAME+',' FROM XN_AUDIT_TRIAL_MST (NOLOCK) WHERE TABLE_NAME='INM01106' AND TRIG='UPDATE' ORDER BY ORDER_ID
+			SET @COL=LEFT(@COL,LEN(@COL)-1)+CHAR(13)+'INTO [##INM_'+@NSPID+'_'+@CMEMOID+']'+CHAR(13)+'FROM INM01106 (NOLOCK) WHERE INV_ID='''+@CMEMOID+''';'
+			PRINT @COL
+			EXEC(@COL)
+			SET @COL=''
+			SET @COL='IF OBJECT_ID(''tempdb..[##IND_'+@NSPID+'_'+@CMEMOID+']'',''U'') IS NOT NULL'+CHAR(13)+' DROP TABLE [##IND_'+@NSPID+'_'+@CMEMOID+'];'+CHAR(13)+'SELECT INV_ID OLD_INV_ID,INV_ID NEW_INV_ID,'
+			SELECT @COL=COALESCE(@COL,'')+FIELD_NAME+' OLD_'+FIELD_NAME+','+FIELD_NAME+' NEW_'+FIELD_NAME+',' FROM XN_AUDIT_TRIAL_MST (NOLOCK) WHERE TABLE_NAME='IND01106' AND TRIG='UPDATE' ORDER BY ORDER_ID
+			SET @COL=LEFT(@COL,LEN(@COL)-1)+CHAR(13)+'INTO [##IND_'+@NSPID+'_'+@CMEMOID+']'+CHAR(13)+'FROM IND01106 (NOLOCK) WHERE INV_ID='''+@CMEMOID+''';'
+			PRINT @COL
+			EXEC(@COL)
+
+
+		END
+		SET @DSTARTTIME=GETDATE()
+
+		SET @BCREDITLimitCrossed=0
+	
+				
+		DECLARE @OUTPUT TABLE ( ERRMSG VARCHAR(2000), MEMO_ID VARCHAR(100))
+
+		SET @cStep = 4		-- SETTTING UP ENVIRONMENT
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1
+
+		SET @CREFAPPMEMOID=''
+	    
+
+		SELECT @CGSTCUTOFFDATE=VALUE FROM CONFIG WHERE CONFIG_OPTION ='GST_CUT_OFF_DATE'
+	
+	
+		SET @CTEMPDBNAME = ''
+
+		SET @CMASTERTABLENAME	= 'INM01106'
+		SET @CDETAILTABLENAME1	= 'IND01106'
+		SET @CDETAILTABLENAME2	= 'PAYMODE_XN_DET'
+		SET @CDETAILTABLENAME5	= 'INV_ATTR_MST'
+		set @CxnBoxDetails      =  'xnBoxDetails'
+	
+		SET @CTEMPMASTERTABLENAME	= 'WSL_INM01106_UPLOAD'
+		SET @CTEMPDETAILTABLENAME1	= 'WSL_IND01106_UPLOAD'
+		SET @CTEMPDETAILTABLENAME2	= 'WSL_PAYMODE_XN_DET_UPLOAD'
+		SET @CTEMPDETAILTABLENAME4	= 'WSL_MBO_WSR_WSL_LINK_UPLOAD'
+		SET @CTEMPDETAILTABLENAME5	= 'WSL_INV_ATTR_MST_UPLOAD'
+		set @CTEMPXNBOXDETAILSNAME  =  'WSL_xnBoxDetails_UPLOAD'
+
+		SET @CTEMPMASTERTABLE	= @CTEMPDBNAME + @CTEMPMASTERTABLENAME
+		SET @CTEMPDETAILTABLE1	= @CTEMPDBNAME + @CTEMPDETAILTABLENAME1
+		SET @CTEMPDETAILTABLE2	= @CTEMPDBNAME + @CTEMPDETAILTABLENAME2
+		--SET @CTEMPDETAILTABLE3  = @CTEMPDBNAME + @CTEMPDETAILTABLENAME3	
+		SET @CTEMPDETAILTABLE4  = @CTEMPDBNAME + @CTEMPDETAILTABLENAME4
+		SET @CTEMPDETAILTABLE5  = @CTEMPDBNAME + @CTEMPDETAILTABLENAME5
+		set @CTEMPxnBoxDetails  = @CTEMPDBNAME + @CTEMPXNBOXDETAILSNAME
+	
+		SET @CERRORMSG			= ''
+		SET @LDONOTUPDATESTOCK	= 0
+		SET @CKEYFIELD1			= 'INV_ID'
+		SET @CMEMONO			= 'INV_NO'
+
+
+		SELECT ARTICLE_CODE,PARA1_CODE,PARA2_CODE,PARA3_CODE,
+		       CAST(0 AS NUMERIC(10,3)) AS QTY,
+		       cast(0 as bit ) as soPara1,
+		       cast(0 as bit ) as soPara2,
+		       cast(0 as bit ) as soPara3,
+		       CAST('' as varchar(50)) as memoid,
+		       CAST('' as varchar(50)) as refmemoid
+			   INTO #OrderSetoff
+		FROM SKU A (NOLOCK)
+		WHERE 1=2
+	
+		--SET @NMEMONOLEN = 10
+		SET @cStep = 6		-- SETTTING UP ENVIRONMENT
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1
+		
+	
+	
+		SELECT @CHODEPTID = [VALUE] FROM CONFIG WHERE  CONFIG_OPTION='HO_LOCATION_ID'		
+
+		SET @cStep = 8		-- SETTTING UP ENVIRONMENT
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1
+		
+		if @NUPDATEMODE in(1,2)
+		begin
+			
+			SELECT @CLOCID=LOCATION_CODE FROM WSL_INM01106_UPLOAD (nolock) WHERE SP_ID=@NSPID  
+			set @CLOCATIONID=@CLOCID
+	    
+	    end
+	    else
+	    begin
+	         SELECT @CLOCID=LOCATION_CODE FROM inm01106 (nolock)  WHERE INV_ID =@CMEMOID  
+			 set @CLOCATIONID=@CLOCID
+	    end
+	    
+	
+		SELECT @NLOCREGISTER=ISNULL(registered_gst ,0) from location (NOLOCK) where dept_id=@CLOCATIONID 
+
+		SET @cStep = 8.2		-- SETTTING UP ENVIRONMENT
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1
+
+		IF @NUPDATEMODE IN (1,2)
+			SELECT @NENTRYMODE=entry_mode,@dInvDt=inv_dt,@NMODE=inv_mode,@NXNITEMTYPE=XN_ITEM_TYPE FROM WSL_INM01106_UPLOAD (NOLOCK) where sp_id=@NSPID
+		ELSE
+			SELECT @NENTRYMODE=entry_mode,@dInvDt=inv_dt,@NMODE=inv_mode,@NXNITEMTYPE=XN_ITEM_TYPE  FROM INM01106 (NOLOCK) where inv_id=@cMemoId
+
+		IF @dInvDt>=CONVERT(DATE,@cGstCutOffDate)
+			SET @bGstBill=1
+	
+
+		SET @cStep = 8.4		-- SETTTING UP ENVIRONMENT
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1
+
+		IF @NUPDATEMODE=15 AND ISNULL(@CMEMOID,'')<>''
+		BEGIN
+			 SET @CKEYFIELDVAL1=@cMemoID
+			 GOTO LBLINSERTUPLOADMIRRORDOC
+		END
+
+		IF @NUPDATEMODE IN (1,2)
+		BEGIN
+		    
+		
+
+			IF ISNULL(@CLOCATIONID,'')=''
+			 BEGIN
+				SET @CERRORMSG ='1.LOCATION ID CAN NOT BE BLANK  '  
+				GOTO END_PROC    
+			 END
+
+
+			-- GETTING DEPT_ID FROM TEMP MASTER TABLE
+			SET @cStep = 8.5	-- SETTTING UP ENVIRONMENT
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 
+			IF @dInvDt IS NULL
+			BEGIN
+				SET @CERRORMSG = 'STEP- ' + LTRIM(@cStep) + ' ERROR ACCESSING THE RECORD TO BE SAVED... INCORRECT PARAMETER'
+				GOTO END_PROC  		
+			END
+
+			IF @CURRENTSTOCKATRSP>0 AND @MAXSTOCKATRSP>0 AND @BFLAG=0
+			BEGIN
+				SET @cStep = 10		-- SETTTING UP ENVIRONMENT
+				EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 
+
+				SET @CCMD =N'SELECT TOP 1 @CURRENTBILLSTOCKATRSP=ISNULL(SUM(B.MRP*A.QUANTITY),0)
+				FROM '+ @CTEMPDETAILTABLE1 +' A (NOLOCK)
+				JOIN SKU B(NOLOCK) ON A.PRODUCT_CODE=B.PRODUCT_CODE
+				WHERE SP_ID='''+LTRIM(RTRIM(@NSPID))+''' '
+				PRINT @CCMD
+				EXEC SP_EXECUTESQL @CCMD,N'@CURRENTBILLSTOCKATRSP NUMERIC(14,2) OUTPUT',@CURRENTBILLSTOCKATRSP OUTPUT
+	          
+	           
+				IF @CURRENTBILLSTOCKATRSP+@CURRENTSTOCKATRSP > @MAXSTOCKATRSP
+				BEGIN
+					SET @cStep = 11.2		-- SETTTING UP ENVIRONMENT
+					EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 	       
+                   
+					SET @BSTOCKRSPLIMITCROSSED=1
+		        
+					SET @CERRORMSG='LOCATION CURRENT STOCK LIMIT '+STR(@CURRENTBILLSTOCKATRSP+@CURRENTSTOCKATRSP)+'
+									CROSS THE TARGET STOCK LIMIT '+ STR(@MAXSTOCKATRSP) +''
+					DELETE A  FROM XNTYPE_CHECKSUM_MST A  WITH (ROWLOCK)  WHERE SP_ID=@NSPID
+					
+					
+					
+					GOTO END_PROC
+				END
+			END
+			
+
+			IF @NBOXUPDATEMODE=2
+			BEGIN
+				SELECT TOP 1 @nBoxNo=box_no from WSL_IND01106_UPLOAD (NOLOCK) WHERE sp_id=@nSpId
+			END
+  		END
+	 
+		IF @bcallfrompackslip=1
+		BEGIN
+			SELECT TOP 1 @cExistingRow=a.row_id FROM WSL_IND01106_UPLOAD a (NOLOCK)
+			JOIN ind01106 b (NOLOCK) ON a.row_id=b.row_id 
+			WHERE a.sp_id=@nSpId
+
+			IF ISNULL(@cExistingRow,'')<>''
+				SELECT @bCalledFromRepickRate=1,@BcallfromPAckSlip=0
+		END
+
+	
+
+		BEGIN TRANSACTION
+		IF @NUPDATEMODE<>1
+		BEGIN
+			IF @NUPDATEMODE=2
+				SELECT TOP 1 @cMemoId=inv_id FROM  wsl_inm01106_UPLOAD (NOLOCK) WHERE sp_id=@nSpId
+		
+		END
+		
+	
+
+		IF @NUPDATEMODE=2 AND @NBOXUPDATEMODE>=1 
+		BEGIN
+			SET @cStep = 12.4	
+			DECLARE @cUploadTableName VARCHAR(200),@CFILTERCONDITION varchar(300),@CINSSPID VARCHAR(50)
+
+			SELECT @cUploadTableName='wsl_ind01106_upload'
+			SET @CFILTERCONDITION=' b.inv_id='''+@cMemoId+''''+
+			(CASE WHEN @NBOXUPDATEMODE=2 THEN ' AND box_no<>'''+ltrim(rtrim(str(@nBoxNo)))+'''' ELSE '' END)		
+			
+			print 'Do not chnage below code as it handles Scenario mentioned as prt#1 in File doc_scenarios'
+			set @CINSSPID=LEFT(@nSpId,38)+'ZZZ'
+			EXEC UPDATEMASTERXN_MIRROR @CSOURCEDB='',@CSOURCETABLE='ind01106',@CDESTDB=''
+									,@CDESTTABLE=@cUploadTableName,@CKEYFIELD1='inv_id',@CKEYFIELD2='',@CKEYFIELD3=''
+									,@LINSERTONLY=1,@CFILTERCONDITION=@CFILTERCONDITION,@LUPDATEONLY=0
+									,@BALWAYSUPDATE=0,@BUPDATEXNS=1,@CINSSPID=@CINSSPID,@CINSSPIDCol=''
+									,@CSEARCHTABLE='ind01106',@cXnType='WSL'
+			print 'enter extra ind entry inserted'
+		END		
+		
+		SET @cStep = 14		-- SETTTING UP ENVIRONMENT
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 
+    
+		IF @NUPDATEMODE IN (1,2)
+			select TOP 1 @CHKSTOCKUSERCODE=USER_CODE,@cKeyFieldval1=inv_id FROM wsl_inm01106_upload (NOLOCK) where sp_id=@NSPID
+		ELSE
+			select TOP 1 @CHKSTOCKUSERCODE=USER_CODE,@cKeyFieldval1=inv_id FROM INM01106 (NOLOCK) WHERE INV_ID=@CMEMOID
+		
+
+		if @nLoginSpId=0
+			set @nLoginSpId=@@spid
+
+		SET @cStep = 16		-- SETTTING UP ENVIRONMENT
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	     
+
+		--SELECT @BALLOWNEGSTOCK=VALUE FROM user_role_det a (NOLOCK)
+		--JOIN users b (NOLOCK) ON a.role_id=b.role_id
+		--WHERE USER_CODE=@CHKSTOCKUSERCODE 
+		--AND FORM_NAME='FRMWSLINVOICE' 
+		--AND FORM_OPTION='ALLOW_NEG_STOCK' --AND @CHKSTOCKUSERCODE<>'0000000'	
+	
+		SET @BALLOWNEGSTOCK =ISNULL(@BALLOWNEGSTOCK,0) 
+	
+		SET @cStep = 18.2		-- GETTING DEPTID INFO FROM TEMP TABLE
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+	
+		IF @NUPDATEMODE=6
+			GOTO LBLAPPROVEWSLGENINV
+		ELSE
+		IF @NUPDATEMODE=7
+			GOTO LBLUPDATEDISPATCHDETAILS
+		ELSE
+		IF @NUPDATEMODE=9
+			GOTO LBLUPDATEWSLORDERS
+
+		SET @cStep = 18.4		-- SETTTING UP ENVIRONMENT
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 
+		/*STOCK UPDATE CHANGES*/
+		IF OBJECT_ID('TEMPDB..#BARCODE_NETQTY','U') IS NOT NULL
+			DROP TABLE #BARCODE_NETQTY
+
+		SELECT DEPT_ID,BIN_ID,PRODUCT_CODE,quantity_in_stock AS XN_QTY,CONVERT(BIT,0) AS bin_transfer
+		,CONVERT(BIT,0) AS new_entry
+		INTO #BARCODE_NETQTY FROM PMT01106 (NOLOCK) WHERE 1=2
+		/*STOCK UPDATE CHANGES*/
+
+		SET @cStep = 18.6
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 
+		
+		--AS DISCUSS WITH SIR REMOVE NORMALIZATION IN SAVING (26042023)
+  --      PRINT 'START NORMALIZE_FIX_PRODUCT_CODE '
+		--IF @NUPDATEMODE IN (1,2) and  isnull(@nEntrymode,0)<>2
+		--BEGIN
+		--	EXEC SP3S_NORMALIZE_FIX_PRODUCT_CODE 'WSL',@NSPID,@NUPDATEMODE,
+		--	@CTEMPDETAILTABLE1,@CMEMOID,@CERRORMSG OUTPUT,'',@CLOCID,@CWIZAPPUSERCODE
+		--	IF ISNULL(@CERRORMSG,'')<>''
+		--	BEGIN
+		--		SET @CERRORMSG='ERROR IN NORMALIZATION'+@CERRORMSG
+		--		GOTO END_PROC
+		--	END
+		--END  
+        --END OF NORMALIZE_FIX_PRODUCT_CODE
+
+		SET @cStep = 18.7
+
+		if @NUPDATEMODE in(1,2)  
+		begin
+
+		    --Login sp id used in party rate so login spid used for Rate cALCULATION
+			IF @NLOGINSPID=0
+			SET @NLOGINSPID=@@SPID
+
+			DELETE A FROM WSL_ITEM_DETAILS A (NOLOCK) WHERE SP_ID =@NLOGINSPID
+
+			SET @CSTEP = 11.1	
+
+		    INSERT WSL_ITEM_DETAILS	(ROW_ID,PRODUCT_CODE,INVOICE_QUANTITY, SP_ID,AUTO_SRNO,RATE,DISCOUNT_PERCENTAGE,DISCOUNT_AMOUNT,BIN_ID,QUANTITY,MANUAL_DISCOUNT,MANUAL_RATE,MANUAL_NET_RATE ,Manual_DP,
+			section_code ,sub_section_code,ARTICLE_CODE  ,PARA1_CODE ,PARA2_CODE ,PARA3_CODE ,PARA4_CODE ,PARA5_CODE ,PARA6_CODE ,MRP,hsn_code ,NET_RATE ,INV_DT ,gross_rate  )
+
+			SELECT A.ROW_ID,A.PRODUCT_CODE,A.INVOICE_QUANTITY,@NLOGINSPID SP_ID,A.AUTO_SRNO,a.RATE,isnull(A.DISCOUNT_PERCENTAGE,0),isnull(A.DISCOUNT_AMOUNT,0),
+			       A.BIN_ID,A.QUANTITY ,A.MANUAL_DISCOUNT,A.MANUAL_RATE,A.MANUAL_NET_RATE,A.Manual_DP,
+				   SM.section_code ,SD.sub_section_code,ART.ARTICLE_CODE ,SKU.PARA1_CODE ,SKU.PARA2_CODE ,SKU.PARA3_CODE ,SKU.PARA4_CODE ,SKU.PARA5_CODE ,SKU.PARA6_CODE ,SKU.MRP ,
+				   SKU.hsn_code,
+				   a.net_rate ,@dInvDt as Inv_dt,
+				   a.rate as gross_rate
+				   FROM WSL_IND01106_UPLOAD A
+				   JOIN SKU (NOLOCK) ON A.PRODUCT_CODE =SKU.product_code 
+				   JOIN article ART (NOLOCK) ON ART.article_code =SKU.article_code 
+				   JOIN sectionD SD (NOLOCK)  ON SD.sub_section_code =ART.sub_section_code 
+				   JOIN SECTIONM SM (NOLOCK)  ON SM.section_code =SD.section_code 
+			WHERE a.SP_ID=@NSPID and isnull(a.scheme_name,'')=''
+
+
+			declare @BGrouoInvoice bit 
+			set @BGrouoInvoice=0
+
+			if @NMODE=2
+			 set @BGrouoInvoice=1
+	
+
+			SET @CSTEP = 110.2
+			
+			EXEC SP3S_APPLY_PARTY_RATE_WSL 
+			@NSPID=@NLOGINSPID,
+			@CLOCID=@CLOCID,
+			@BGrouoInvoice=@BGrouoInvoice
+
+			
+
+			IF EXISTS (SELECT TOP 1 'U' FROM WSL_ITEM_DETAILS WHERE SP_ID=@NLOGINSPID AND ISNULL(ERRMSG,'')<>'')
+			BEGIN
+			      
+				SELECT TOP 1 @CERRORMSG=ERRMSG  FROM WSL_ITEM_DETAILS WHERE SP_ID=@NLOGINSPID AND ISNULL(ERRMSG,'')<>''
+				GOTO END_PROC
+			END
+				
+            SET @CSTEP = 11.3
+
+		  
+			UPDATE A  SET RATE=B.RATE ,
+			              DISCOUNT_PERCENTAGE=B.DISCOUNT_PERCENTAGE,
+						  DISCOUNT_AMOUNT=B.DISCOUNT_AMOUNT,
+						  NET_RATE=B.NET_RATE,
+						  manual_net_rate=b.manual_net_rate,
+						  manual_rate=b.manual_rate,
+						  manual_discount=b.manual_discount,
+						  manual_dp=b.manual_dp
+						--  AMOUNT=B.NET_RATE*A.INVOICE_QUANTITY
+			FROM WSL_IND01106_UPLOAD A 
+			JOIN WSL_ITEM_DETAILS B ON A.ROW_ID =B.ROW_ID 
+			WHERE A.SP_ID=@NSPID AND B.SP_ID =@NLOGINSPID
+
+		end
+		
+	
+		
+		IF @NUPDATEMODE IN (2,3,4,5,8)	AND NOT (@nUpdatemode=2 AND @NBOXUPDATEMODE=1)		
+		BEGIN
+
+			SET @cStep = 18.9		-- SETTTING UP ENVIRONMENT
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 
+
+			IF @nUpdatemode=8
+				SELECT TOP 1 @CPSID=A.PS_ID FROM IND01106 A (NOLOCK) JOIN WPS_MST B (NOLOCK) ON A.PS_ID=B.PS_ID
+				WHERE INV_ID=@CMEMOID AND PS_NO=@CPSNO
+
+			SET @cCmd=N'SELECT A.DEPT_ID,A.BIN_ID,A.PRODUCT_CODE,-SUM(A.QUANTITY),0 as bin_transfer,0 as new_entry
+			FROM IND01106 A (NOLOCK)
+			JOIN SKU_names B (NOLOCK) ON A.product_code=B.product_code
+			WHERE A.INV_ID='''+@CKEYFIELDVAL1+''' AND ISNULL(b.stock_na,0)=0  '+
+			(CASE WHEN @nUpdatemode=4 OR @nBoxUpdatemode=2 THEN ' and box_no='+LTRIM(RTRIM(STR(@nBoxNo)))
+				  WHEN @nUpdatemode=5 THEN ' and product_code='''+LTRIM(RTRIM(@CPRODUCTCODE))+''''
+				  WHEN @nUpdatemode=8 THEN ' and a.ps_id='''+LTRIM(RTRIM(@cPsId))+''''
+				  ELSE ' AND 1=1 ' END)+' GROUP BY A.DEPT_ID,A.BIN_ID,A.PRODUCT_CODE'
+			
+
+			INSERT #BARCODE_NETQTY(DEPT_ID,BIN_ID,PRODUCT_CODE,XN_QTY,bin_transfer,new_entry)	
+			EXEC SP_EXECUTESQL @cCmd
+
+			SET @cStep = 19.2		-- SETTTING UP ENVIRONMENT
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 
+
+			SELECT @NENTRYMODE=ENTRY_MODE,@BIS_BIN_TRANSFER=BIN_TRANSFER,@CTARGET_BIN=TARGET_BIN_ID
+			FROM INM01106 (NOLOCK) WHERE INV_ID=@CMEMOID
+			
+			SET @cCmd=N'SELECT A.DEPT_ID,c.target_BIN_ID,A.PRODUCT_CODE,SUM(A.QUANTITY),1 as bin_transfer,0 as new_entry
+			FROM IND01106 A (NOLOCK)
+			JOIN SKU_names B (NOLOCK) ON A.product_code=B.product_code
+			JOIN inm01106 c (NOLOCK) ON c.inv_id=a.inv_id
+			WHERE A.INV_ID='''+@CKEYFIELDVAL1+''' AND ISNULL(b.stock_na,0)=0 AND ISNULL(c.bin_transfer,0)=1 '+
+			(CASE WHEN @nUpdatemode=4 OR @NBOXUPDATEMODE=2 THEN ' and box_no='+LTRIM(RTRIM(STR(@nBoxNo)))
+				  WHEN @nUpdatemode=5 THEN ' and product_code='''+LTRIM(RTRIM(@CPRODUCTCODE))+''''
+				  WHEN @nUpdatemode=8 THEN ' and a.ps_id='''+LTRIM(RTRIM(@cPsId))+''''
+				  ELSE ' AND 1=1 ' END)+' GROUP BY A.DEPT_ID,c.target_BIN_ID,A.PRODUCT_CODE'
+			
+			INSERT #BARCODE_NETQTY(DEPT_ID,BIN_ID,PRODUCT_CODE,XN_QTY,bin_transfer,new_entry)
+			EXEC SP_EXECUTESQL @cCmd
+		END
+		
+		IF @NUPDATEMODE IN (1,2)
+		BEGIN
+			SET @cStep = 19.4		-- SETTTING UP ENVIRONMENT
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 
+
+			UPDATE WSL_INM01106_UPLOAD SET MEMO_TYPE = (CASE WHEN MEMO_TYPE=0 then 1 else MEMO_TYPE END),
+			bill_level_tax_method=(CASE WHEN bill_level_tax_method=0 THEN 1 ELSE bill_level_tax_method END) 
+			WHERE  SP_ID =@NSPID and (ISNULL(MEMO_TYPE,0)=0 OR bill_level_tax_method=0)
+
+			INSERT #BARCODE_NETQTY(DEPT_ID,BIN_ID,PRODUCT_CODE,XN_QTY,bin_transfer,new_entry)
+			SELECT A.DEPT_ID,A.BIN_ID,A.PRODUCT_CODE,SUM(A.QUANTITY),0 as bin_transfer,1 as new_entry
+			FROM WSL_IND01106_UPLOAD A (NOLOCK)
+			JOIN SKU_names B (NOLOCK) ON A.product_code=B.product_code
+			WHERE A.sp_ID=@nSpId AND ISNULL(b.stock_na,0)=0 
+			GROUP BY A.DEPT_ID,A.BIN_ID,A.PRODUCT_CODE
+
+			SET @cStep = 19.6		-- SETTTING UP ENVIRONMENT
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 
+		
+			SELECT @NENTRYMODE=ENTRY_MODE,@BIS_BIN_TRANSFER=BIN_TRANSFER,@CTARGET_BIN=TARGET_BIN_ID
+			FROM WSL_INM01106_UPLOAD (NOLOCK) WHERE SP_ID=@nSpId
+
+			INSERT #BARCODE_NETQTY(DEPT_ID,BIN_ID,PRODUCT_CODE,XN_QTY,bin_transfer,new_entry)
+			SELECT A.DEPT_ID,c.target_BIN_ID,A.PRODUCT_CODE,SUM(A.QUANTITY),1 as bin_transfer,1 as new_entry
+			FROM WSL_IND01106_UPLOAD A (NOLOCK)
+			JOIN SKU_names B (NOLOCK) ON A.product_code=B.product_code
+			JOIN WSL_INM01106_UPLOAD c (NOLOCK) ON c.inv_id=a.inv_id
+			WHERE A.sp_ID=@nSpId AND ISNULL(b.stock_na,0)=0 AND ISNULL(c.bin_transfer,0)=1
+			GROUP BY A.DEPT_ID,c.target_BIN_ID,A.PRODUCT_CODE		
+		END
+
+		SET @cStep = 20.1 
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+		
+
+		IF @nUpdatemode IN (1,2)
+		BEGIN
+
+			IF @NUPDATEMODE IN (2)
+			BEGIN
+				SET	@cStep = 21.5
+				EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 
+
+				UPDATE b SET AC_CODE=A.AC_CODE  FROM WSL_INM01106_UPLOAD A (NOLOCK) 
+				JOIN PARCEL_DET B (NOLOCK)  ON A.INV_ID =B.REF_MEMO_ID
+				JOIN PARCEL_MST  C (NOLOCK) ON B.PARCEL_MEMO_ID =C.PARCEL_MEMO_ID 
+				WHERE A.AC_CODE <>B.AC_CODE  AND C.CANCELLED=0
+				AND A.CANCELLED =0 AND A.SP_ID =@NSPID AND C.XN_TYPE='WSL'			
+			
+			END		
+
+			EXEC SP_VALIDATEXN_BEFORESAVE 'WSL',@nSpId,'0000000',@NUPDATEMODE,@CCMDOUTPUT OUTPUT,@BNEGSTOCKFOUND OUTPUT
+		
+			IF(@BALLOWNEGSTOCK=1 AND @BNEGSTOCKFOUND=1)
+			BEGIN
+				SET @BNEGSTOCKFOUND=0
+				SET @CCMDOUTPUT=''
+			END
+		
+			IF ISNULL(@CCMDOUTPUT,'') <> ''
+			BEGIN
+				SET @CERRORMSG = 'STEP- ' + LTRIM(@cStep) + ' DATA VALIDATION ON TEMP DATA FAILED : ' + @CCMDOUTPUT + '...'
+				GOTO END_PROC
+			END
+
+			--update wsl Ageing Days
+			IF @NMODE=1  
+			UPDATE a SET wsl_selling_days=(CASE WHEN b.RECEIPT_DT IS NOT NULL
+			THEN  Datediff(day,b.receipt_dt,@dInvDt) else 1 END)
+			FROM WSL_IND01106_UPLOAD a WITH (ROWLOCK) LEFT OUTER  JOIN 
+			(SELECT a.product_code,max(receipt_dt) RECEIPT_DT FROM pid01106 a (NOLOCK) 
+			 JOIN pim01106 b (NOLOCK) ON a.mrr_id=b.mrr_id
+			 JOIN WSL_IND01106_UPLOAD c (NOLOCK) ON c.PRODUCT_CODE=a.product_code
+			 WHERE SP_ID=@NSPID AND b.dept_id=@CLOCATIONID AND cancelled=0
+			 GROUP BY a.product_code) b ON a.product_code=b.product_code
+			 WHERE a.sp_id=@nSpID and abs(Datediff(day,b.receipt_dt,@dInvDt))<=10000
+
+			--end of wsl ageing days
+
+
+
+		END
+
+		
+
+	
+		IF @NUPDATEMODE IN (2,3,4,5,8,10)			
+		BEGIN
+			SET @cStep = 24
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+			
+			IF ISNULL(@CMEMOID,'') = ''AND @nUpdatemode<>2
+			BEGIN
+				SET @CERRORMSG = 'STEP- ' + LTRIM(@cStep) + ' MEMO ID REQUIRED .....CANNOT PROCEED'
+				GOTO END_PROC  		
+			END
+			
+			IF @NUPDATEMODE IN (3,4,5,8)			
+			BEGIN
+				SET @cStep = 25.5
+				EXEC SP3S_upd_qty_lastupdate
+				@nUpdateMode=3,
+				@cXnType='WSL',
+				@cMasterTable='inm01106',
+				@cMemoIdCol='INV_ID',
+				@cMemoId=@CKEYFIELDVAL1,
+				@CERRORMSG=@CERRORMSG OUTPUT
+	
+				IF ISNULL(@cErrormsg,'')<>''
+					GOTO END_PROC
+			END
+
+			SET @cStep = 26
+			
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+						
+			IF @NUPDATEMODE=4 AND ISNULL(@NBOXNO,0)=0
+			BEGIN
+				SET @CERRORMSG = 'STEP- ' + LTRIM(@cStep) + ' BOX NO. REQUIRED .....CANNOT PROCEED'
+				GOTO END_PROC  		
+			END
+			
+			IF @NUPDATEMODE=5 AND ISNULL(@CPRODUCTCODE,'')=''
+			BEGIN
+				SET @CERRORMSG = 'STEP- ' + LTRIM(@cStep) + ' BAR CODE NO. REQUIRED .....CANNOT PROCEED'
+				GOTO END_PROC  		
+			END
+
+			IF @NUPDATEMODE=8 AND ISNULL(@CPSNO,'')=''
+			BEGIN
+				SET @CERRORMSG = 'STEP- ' + LTRIM(@cStep) + ' PACK SLIP NO. REQUIRED .....CANNOT PROCEED'
+				GOTO END_PROC  		
+			END
+			ELSE
+			IF @NUPDATEMODE=10
+			BEGIN
+				IF ISNULL(@dMemoDtPara,'')=''
+				BEGIN
+					SET @CERRORMSG = 'STEP- ' + LTRIM(STR(@cStep)) + ' New Memo Date required to be changed .....CANNOT PROCEED'
+					GOTO END_PROC  		
+				END
+
+				GOTO lblUpdatedate
+			END						
+
+			SET @cStep = 28		-- SETTTING UP ENVIRONMENT
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1		
+		    
+			
+			EXEC SP3S_UPDATE_PMTSTOCK_WSL
+				@cMemoId=@cMemoId,
+				@bRevertFlag=1,
+				@NENTRYMODE=@NENTRYMODE,
+				@BIS_BIN_TRANSFER=@BIS_BIN_TRANSFER,
+				@BALLOWNEGSTOCK=@BALLOWNEGSTOCK,
+				@nSpId=@nSpId,
+				@BNEGSTOCKFOUND=@BNEGSTOCKFOUND OUTPUT
+
+			IF @BNEGSTOCKFOUND=1
+				GOTO END_PROC
+			--Updatemode:3 CANCELLED MEMO 4 DELETE BOX 5 DELETE ITEM 
+			--Updatemode:2 and NBOXUPDATEMODE 2
+			IF (@NUPDATEMODE IN (3,4,5) )
+			BEGIN
+			   Print 'Removing for now'
+			 --- Removed this validation for Now as concept of Picklist generation is now made
+			 --- independent of Barcode by DInkar and now Dinkar need to revise this validation (Sanjay : 16-10-2023)
+			    IF @NENTRYMODE=3 AND ISNULL(@BIS_BIN_TRANSFER,0)<>1
+				BEGIN
+
+					  
+					  if @NUPDATEMODE in(3)
+					  begin
+					     
+						 Delete a from SalesOrderProcessing A (nolock) where XnType ='OrderInvoice' and memoid=@CKEYFIELDVAL1
+
+					  end
+					  ELSE
+					  BEGIN
+					        
+
+							if @NUPDATEMODE IN(4)
+							begin
+
+							     INSERT INTO #ORDERSETOFF(ARTICLE_CODE,PARA1_CODE,PARA2_CODE,PARA3_CODE,Qty)
+								  SELECT B.ARTICLE_CODE ,B.PARA1_CODE ,B.PARA2_CODE ,B.PARA3_CODE ,
+										(SUM(A.QUANTITY)) AS QTY
+								  FROM	Ind01106 A (NOLOCK)
+								  JOIN SKU B (NOLOCK) ON A.PRODUCT_CODE =B.PRODUCT_CODE 
+								  WHERE A.inv_id=@CKEYFIELDVAL1 and a.box_no =@NBOXNO
+								  GROUP BY B.ARTICLE_CODE ,B.PARA1_CODE ,B.PARA2_CODE ,B.PARA3_CODE
+
+							end
+							Else if @NUPDATEMODE =5
+							begin
+							      
+								  INSERT INTO #ORDERSETOFF(ARTICLE_CODE,PARA1_CODE,PARA2_CODE,PARA3_CODE,Qty)
+								  SELECT B.ARTICLE_CODE ,B.PARA1_CODE ,B.PARA2_CODE ,B.PARA3_CODE ,
+										(SUM(A.QUANTITY)) AS QTY
+								  FROM	Ind01106 A (NOLOCK)
+								  JOIN SKU B (NOLOCK) ON A.PRODUCT_CODE =B.PRODUCT_CODE 
+								  WHERE A.inv_id=@CKEYFIELDVAL1 and a.product_code =@CPRODUCTCODE
+								  GROUP BY B.ARTICLE_CODE ,B.PARA1_CODE ,B.PARA2_CODE ,B.PARA3_CODE
+
+							end
+							
+							if @NUPDATEMODE in(4,5)
+							begin
+							    
+							    UPDATE A SET SOPARA1  =ISNULL(SD.SOPARA1,0),SOPARA2 = ISNULL(SD.SOPARA2,0),SOPARA3 =ISNULL(SD.SOPARA3,0)
+							    FROM #ORDERSETOFF A
+							    JOIN ARTICLE B (nolock) ON A.ARTICLE_CODE =B.ARTICLE_CODE 
+							    JOIN SECTIOND SD (NOLOCK) ON SD.SUB_SECTION_CODE =B.SUB_SECTION_CODE 
+							    
+							    if exists (select top 1 'U' from #ORDERSETOFF where SOPARA1=0)
+							       Update  #ORDERSETOFF set para1_code ='0000000' where SOPARA1=0
+							       
+							    if exists (select top 1 'U' from #ORDERSETOFF where SOPARA2=0)
+							       Update  #ORDERSETOFF set para2_code ='0000000' where SOPARA2=0
+							       
+							      if exists (select top 1 'U' from #ORDERSETOFF where SOPARA3=0)
+							       Update  #ORDERSETOFF set para3_code ='0000000' where SOPARA3=0
+							       
+															       
+								select a.RefMemoId ,a.MemoId , a.articlecode,a.Para1Code ,a.Para2Code ,a.Para3Code ,a.Qty ,b.QTY as RevertQty
+									into #tmpexistingItem
+								from SalesOrderProcessing a
+								join #ORDERSETOFF b on a.ArticleCode =b.article_code and a.Para1Code =b.para1_code and a.Para2Code =b.para2_code and a.Para3Code =b.para3_code 
+								where xntype='orderInvoice' and a.MemoId =@CKEYFIELDVAL1
+
+
+								;with cte_sales as
+								(
+								   select  RefMemoId ,MemoId , articlecode,Para1Code ,Para2Code ,Para3Code ,Qty,RevertQty,
+													1 as Srno
+									from #tmpexistingItem
+									union all
+								   select RefMemoId ,MemoId , articlecode,Para1Code ,Para2Code ,Para3Code ,Qty,RevertQty,
+													Srno=Srno+1 
+								   from cte_sales   
+								   WHERE SrNo<Qty
+								)
+
+								select *,QTYSR=ROW_NUMBER() over (partition by memoid,articleCode,para1Code,para2Code,para3Code order by refmemoid,srno)
+								into #tmppordrevert 
+								from cte_sales
+								option (maxrecursion 32767);
+
+								Update A set Qty =A.Qty -b.ReverseQty
+								from SalesOrderProcessing A
+								join
+								(
+								select RefMemoId ,MemoId ,ArticleCode ,Para1Code ,Para2Code ,Para3Code ,COUNT(*) as ReverseQty 
+								from #tmppordrevert 
+								where qtySr <=RevertQty 
+								group by RefMemoId ,MemoId ,ArticleCode ,Para1Code ,Para2Code ,Para3Code
+								) b on A.RefMemoId =b.RefMemoId and A.MemoId =b.MemoId and A.ArticleCode =b.ArticleCode and A.Para1Code =b.Para1Code and A.Para2Code =b.Para2Code and A.Para3Code =b.Para3Code 
+                                WHERE XNTYPE ='ORDERINVOICE' AND a.MEMOID=@CKEYFIELDVAL1
+							       
+							     
+							
+							end
+					      
+						  
+					  END
+
+				END				
+			End
+
+			/*STOCK UPDATE CHANGES*/
+			--FOR UPDATE MODES 3,4,5,8, GETTING THE BARCODES FOR STOCK REVERSAL
+			IF @NUPDATEMODE=3
+			BEGIN
+						
+				SET @cStep = 35		-- SETTTING UP ENVIRONMENT
+				EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 
+
+				EXEC SP3S_CAPTURE_AUDIT_TRAIL 'WSL',@CMEMOID,@CTEMPMASTERTABLE,@CTEMPDETAILTABLE1,@NSPID,@CMACHINENAME,@CWINDOWUSERNAME,@CWIZAPPUSERCODE,1,'1900-01-01',@EDIT_CLICKED
+
+				SET @cStep = 38		-- SETTTING UP ENVIRONMENT
+				EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 
+				
+				IF EXISTS (SELECT TOP 1 inv_id FROM wsl_bo_ref (NOLOCK) WHERE inv_id=@cMemoId)
+					DELETE FROM wsl_bo_ref WITH (ROWLOCK)WHERE inv_id=@cMemoId
+				
+				
+				IF @NENTRYMODE=5 AND EXISTS (SELECT TOP 1 inv_id FROM MBO_WSR_WSL_LINK (NOLOCK) WHERE inv_id=@cMemoId)
+					DELETE FROM MBO_WSR_WSL_LINK WITH (ROWLOCK) WHERE INV_ID=@CMEMOID
+				
+	
+				set @cStep=42
+				EXEC SP_CHKXNSAVELOG 'WSL',@cStep,0,@nSpId,'',1
+
+				UPDATE inm01106 WITH (ROWLOCK) SET CANCELLED = 1,LAST_UPDATE=GETDATE() WHERE inv_id = @CMEMOID
+
+					IF @NMODE=2
+					BEGIN
+
+						EXEC SP3S_VALIDATE_SERVERLOCSTOCK @CMEMOID,@CERRORMSG OUTPUT ,@NUPDATEMODE
+
+						IF @CERRORMSG<>''
+						GOTO END_PROC
+
+				   END
+
+
+				SET @cStep = 50 
+				EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 									
+				UPDATE A SET WSL_INV_ID='' FROM WPS_MST A WITH (ROWLOCK)  JOIN 
+				inm01106 B WITH (NOLOCK)  ON A.WSL_INV_ID=B.INV_ID
+				WHERE b.inv_id = @CMEMOID
+				
+
+
+
+				if isnull(@cErrormsg,'')<>''
+				   Goto End_proc
+				   
+				set @cStep=54
+		   		EXEC SP3S_CANCEL_AUTOVOUCHERS
+				@cXnType='WSL',
+				@CMEMOID=@CMEMOID     
+
+				--GOTO END_PROC --due to auto receive challan for sis location
+				goto  LBLAUTORECEIVECHALLAN
+
+			END
+			
+			ELSE
+			IF @NUPDATEMODE=4
+			BEGIN
+				SET @cStep = 56
+				EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+				IF EXISTS(SELECT TOP 1 BOX_NO FROM IND01106  (NOLOCK) WHERE INV_ID=@CMEMOID AND BOX_NO=@NBOXNO)
+				BEGIN
+
+				   IF ISNULL(@NENTRYMODE,0) =3 
+					BEGIN
+					    	DELETE B  FROM ind01106 A (NOLOCK)
+				            JOIN BUYER_ORDER_wsl_LINK B (NOLOCK) ON A.ROW_ID =B.ind_ROW_ID
+				            WHERE A.inv_id=@CKEYFIELDVAL1 AND A.BOX_NO=LTRIM(RTRIM(STR(@NBOXNO))) 
+					END
+
+					SET @cStep = 58 
+					EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 									
+					SET @CCMD = N'DELETE FROM IND01106 WITH (ROWLOCK) WHERE INV_ID = ''' +@CMEMOID + ''' AND
+								  BOX_NO='+LTRIM(RTRIM(STR(@NBOXNO)))
+					print @CCMD			  
+					EXEC SP_EXECUTESQL @CCMD
+
+					SET @cStep = 60 
+					EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 										
+					SET @CCMD = N'UPDATE INM01106 WITH (ROWLOCK) SET LAST_UPDATE = GETDATE() WHERE INV_ID = ''' +@CMEMOID + ''''
+					PRINT @CCMD
+					EXEC SP_EXECUTESQL @CCMD
+
+					IF EXISTS (SELECT TOP 1 'U'FROM XNBOXDETAILS A (NOLOCK) WHERE REF_MEMO_ID =@CMEMOID AND BOX_NO =@NBOXNO AND XN_TYPE='WSL')
+					BEGIN
+					      DELETE A  FROM XNBOXDETAILS A (NOLOCK) WHERE REF_MEMO_ID =@CMEMOID AND BOX_NO =@NBOXNO AND XN_TYPE='WSL'
+
+					END
+				END
+				ELSE
+				BEGIN
+					SET @CERRORMSG='INVALID BOX NO. PROVIDED.....PLEASE CHECK'
+					GOTO END_PROC
+				END	
+			END			
+			ELSE
+			IF @NUPDATEMODE=5
+			BEGIN
+		
+				SET @cStep = 62
+				EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+				 IF ISNULL(@NENTRYMODE,0) =3 
+					BEGIN
+					    	DELETE B  FROM ind01106 A (NOLOCK)
+				            JOIN BUYER_ORDER_wsl_LINK B (NOLOCK) ON A.ROW_ID =B.ind_ROW_ID
+				            WHERE A.inv_id=@CKEYFIELDVAL1 AND A.PRODUCT_CODE=@CPRODUCTCODE
+					END
+				
+				SET @CCMD = N'DELETE FROM IND01106 WITH (ROWLOCK) WHERE INV_ID = ''' +@CMEMOID + ''' AND
+							  PRODUCT_CODE='''+@CPRODUCTCODE+''''
+				EXEC SP_EXECUTESQL @CCMD
+
+				SET @cStep = 64
+				EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 									
+				SET @CCMD = N'UPDATE INM01106 WITH(ROWLOCK) SET LAST_UPDATE = GETDATE() WHERE INV_ID = ''' +@CMEMOID + ''''
+				PRINT @CCMD
+				EXEC SP_EXECUTESQL @CCMD
+
+				 IF EXISTS (SELECT TOP 1 'U' FROM XNBOXDETAILS A (NOLOCK) WHERE REF_MEMO_ID =@CMEMOID AND BOX_NO =@NBOXNO AND XN_TYPE='WSL')
+					BEGIN
+
+					      declare @ntotalXNITEMWEIGHT numeric(10,3)
+						  select @ntotalXNITEMWEIGHT=sum(XNITEMWEIGHT)  FROM IND01106  A (NOLOCK) 
+						  WHERE inv_id =@CMEMOID AND BOX_NO =@NBOXNO 
+
+						  UPDATE A SET  XNITEMWEIGHT=@ntotalXNITEMWEIGHT
+						  FROM XNBOXDETAILS A (NOLOCK) WHERE REF_MEMO_ID =@CMEMOID AND BOX_NO =@NBOXNO AND XN_TYPE='wsl'
+
+					END
+				
+			END						
+
+			ELSE
+			IF @NUPDATEMODE=8
+			BEGIN
+				SET @cStep =66
+				EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+				
+				IF EXISTS (SELECT TOP 1 PS_NO FROM IND01106 A (NOLOCK) JOIN WPS_MST B (NOLOCK) ON A.PS_ID=B.PS_ID
+						   WHERE INV_ID=@CMEMOID AND PS_NO=@CPSNO)
+				BEGIN
+
+					SET @cStep = 68 
+					EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 					
+
+					SELECT TOP 1 @CPSID=A.PS_ID FROM IND01106 A (NOLOCK) JOIN WPS_MST B (NOLOCK) ON A.PS_ID=B.PS_ID
+					WHERE INV_ID=@CMEMOID AND PS_NO=@CPSNO
+					
+					SET @cStep = 70
+					DELETE FROM IND01106 WITH (ROWLOCK) WHERE INV_ID = @CMEMOID AND PS_ID=@CPSID
+					
+					SET @cStep = 72
+					UPDATE wps_mst SET wsl_inv_id='' WHERE ps_id=@cPsId
+					
+				END
+				ELSE
+				BEGIN
+					SET @CERRORMSG='INVALID PACKING SLIP NO PROVIDED.....PLEASE CHECK'
+					GOTO END_PROC
+				END	
+			END
+			
+
+			IF @NUPDATEMODE NOT IN(2,3)
+			BEGIN
+
+			     UPDATE  WSL_INM01106_UPLOAD SET DISCOUNT_PERCENT_MRP=CASE WHEN Bill_LEVEL_DISC_METHOD=2 THEN DISCOUNT_PERCENTAGE ELSE 0 END  WHERE SP_ID=@NSPID and manual_discount=0
+
+				EXEC SP3S_CALTOTALS_WSL @nUpdatemode=@nUpdatemode,@cInvId=@cMemoId,@bGstBill=@bGstBill,@COUNTRY='',
+				@NLOCREGISTER=@NLOCREGISTER,@CERRORMSG=@CERRORMSG OUTPUT,@CLOCID=@CLOCID,@NPARTY_AMOUNT_FORTCS=@NPARTY_AMOUNT_FORTCS
+
+				GOTO END_PROC
+			END
+		END
+		
+
+
+		SET @cStep = 80
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 							
+
+		IF ISNULL(@nEntrymode,0)<=0 and @NUPDATEMODE<>3
+		BEGIN
+		   SET @CERRORMSG='INVALID ENTRY MODE.....PLEASE CHECK'
+	      GOTO END_PROC
+
+		END
+
+
+        
+		
+		
+		-- START UPDATING XN TABLES	
+		IF @NUPDATEMODE = 1 -- ADDMODE	
+		BEGIN	
+		
+	
+			set @cStep=86
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+		
+			SELECT @BGENERATEAUTOSERIES=0,@bEnforcebillingrules=0
+			
+			SET @CCMD=N'SELECT @NMODE=INV_MODE,@CTARGETLOCID=PARTY_DEPT_ID,@cMemoPrefixDefined=memo_prefix,
+						@dInvDt=inv_dt FROM '+@CTEMPMASTERTABLE+' (NOLOCK) where  sp_id='''+LTRIM(RTRIM(@NSPID))+''' '
+			EXEC SP_EXECUTESQL @CCMD,N'@NMODE INT OUTPUT,@CTARGETLOCID VARCHAR(4) OUTPUT,@cMemoPrefixDefined VARCHAR(20) OUTPUT,@dInvDt DATETIME OUTPUT',
+			@NMODE OUTPUT,@CTARGETLOCID OUTPUT,@cMemoPrefixDefined OUTPUT,@dInvDt OUTPUT
+					
+
+			SET @cStep=88
+			
+
+
+
+			SET @cXnTypePara=(CASE WHEN @NMODE=1 THEN 'WSL' ELSE 'WSL_GRP' END)
+
+			
+			----- Done on 30-01-2019 for Chhabra555 change of Wholesale through Excel Import								
+			----- Because they want Auto series by Default But manual in Excel Import
+			if isnull(@NXNITEMTYPE,0)<>5
+			begin
+
+				IF @bCalledFromExcelImport=0			
+				BEGIN
+					SET @cStep = 90 
+					EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 					
+					EXEC SAVETRAN_GETMEMOPREFIX
+					@cXnType=@cXnTypePara,
+					@cUserCode=@CWIZAPPUSERCODE,
+					@cFinYear=@CFINYEAR,
+					@cSourceLocId=@CLOCATIONID,
+					@cTargetLocId=@CTARGETLOCID,
+					@cManualPrefix=@CMEMOPREFIXDefined,
+					@NSPID=@NSPID,
+					@cMemoPrefix=@cMemoPrefixProc OUTPUT,
+					@cErrormsg=@cErrormsg OUTPUT
+
+			
+					IF ISNULL(@cErrormsg,'')<>''
+						GOTO END_PROC
+				END
+				ELSE
+				IF @bCalledFromExcelImport=1 
+				BEGIN
+
+					IF RIGHT(@CMEMOPREFIXDefined,1)<>'-'
+					SET @CMEMOPREFIXDefined=@CMEMOPREFIXDefined+'-'		
+					SET @cMemoPrefixProc=(CASE WHEN LEFT(@CMEMOPREFIXDefined,len(@CLOCATIONID))<>@CLOCATIONID THEN @CLOCATIONID ELSE '' END)+@CMEMOPREFIXDefined	
+					
+				END
+
+			end
+			else 
+			begin
+			     
+				 SET @CMEMOPREFIXPROC=@CLOCATIONID+@CTARGETLOCID+'R'+'-'
+
+			end
+
+				
+			SET @NMEMONOLEN			= LEN(@cMemoPrefixProc)+6
+			
+			-- GENERATING NEW JOB ORDER NO		
+			SET @NSAVETRANLOOP=0
+			WHILE @NSAVETRANLOOP=0
+			BEGIN
+			
+				SET @cStep = 92		-- GENERATING NEW KEY
+				EXEC SP_CHKXNSAVELOG 'WSL',@cStep,0,@nSpId,'',1
+				
+				--SET @CMEMONOPREFIX='LATER'	
+				EXEC GETNEXTKEY @CMASTERTABLENAME, @CMEMONO,@NMEMONOLEN,@cMemoPrefixProc,1,
+								@CFINYEAR,0, @CMEMONOVAL OUTPUT   
+			
+				SET @cStep = 94 
+				EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 
+									
+				
+				PRINT @CMEMONOVAL
+				SET @CCMD=N'IF EXISTS ( SELECT '+@CMEMONO+' FROM '+@CMASTERTABLENAME+' (NOLOCK) 
+										WHERE '+@CMEMONO+'='''+@CMEMONOVAL+''' 
+										AND FIN_YEAR = '''+@CFINYEAR+'''  )
+								SET @NLOOPOUTPUT=0
+							ELSE
+								SET @NLOOPOUTPUT=1'
+				PRINT @CCMD
+				EXEC SP_EXECUTESQL @CCMD, N'@NLOOPOUTPUT BIT OUTPUT',@NLOOPOUTPUT=@NSAVETRANLOOP OUTPUT
+			END
+
+			IF @CMEMONOVAL IS NULL  OR @CMEMONOVAL LIKE '%LATER%'  OR ISNUMERIC(RIGHT(@cMemoNoval,6))=0
+			BEGIN
+				  SET @CERRORMSG = 'STEP- ' + LTRIM(@cStep) + ' ERROR CREATING NEXT MEMO NO....'	
+				  GOTO END_PROC  		
+			END
+			
+
+
+			SET @cStep = 96		-- GENERATING NEW ID
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+         --  select @CLOCATIONID,@CFINYEAR,@CLOCATIONID,@CMEMONOVAL
+			--  GENERATING NEW JOB ORDER ID
+			SET @CKEYFIELDVAL1 = @CLOCATIONID + RIGHT(@CFINYEAR,2)+isnull(REPLICATE('0', (22-LEN(@CLOCATIONID + RIGHT(@CFINYEAR,2)))-LEN(LTRIM(RTRIM(@CMEMONOVAL)))) ,'') + LTRIM(RTRIM(@CMEMONOVAL))
+			
+			IF @CKEYFIELDVAL1 IS NULL OR @CKEYFIELDVAL1 LIKE '%LATER%'
+			BEGIN
+				  SET @CERRORMSG = 'STEP- ' + LTRIM(@cStep) + ' ERROR CREATING NEXT MEMO ID....'
+				  -- SET @CRETCMD= N'SELECT '''+@CERRORMSG+''' AS ERRMSG,'''' AS MEMO_ID'
+				  GOTO END_PROC
+			END
+			
+			SET @cStep = 98		-- UPDATING NEW ID INTO TEMP TABLES
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+
+			EXEC SP3S_CHECK_WSL_PREVMEMO
+			@CFINYEAR=@CFINYEAR,
+			@CMEMONO=@CMEMONOVAL,
+			@CMEMOPREFIX=@CMEMOPREFIXPROC,
+			@cSourceLocationCode=@CLOCATIONID,
+			@CERRORMSG=@CERRORMSG  OUTPUT
+			
+			IF ISNULL(@CERRORMSG,'')<>''
+				GOTO END_PROC
+
+			--if @@spid=58
+			--	select @CMEMONOVAL , @CKEYFIELDVAL1
+			-- UPDATING NEWLY GENERATED JOB ORDER NO AND JOB ORDER ID IN PIM AND PID TEMP TABLES
+			SET @CCMD = 'UPDATE ' + @CTEMPMASTERTABLE + ' WITH (ROWLOCK)  SET ' + @CMEMONO+'=''' + @CMEMONOVAL+''',' + 
+						@CKEYFIELD1+' = '''+@CKEYFIELDVAL1+''',Auto_prefix='''+@CMEMOPREFIXPROC+'''  where sp_id='''+LTRIM(RTRIM(@NSPID))+''' '
+			PRINT @CCMD
+			EXEC SP_EXECUTESQL @CCMD
+
+
+            SET @CCMD = 'UPDATE ' + @CTEMPMASTERTABLE + ' WITH (ROWLOCK)  SET TARGET_BIN_ID=''999''
+			where sp_id='''+LTRIM(RTRIM(@NSPID))+''' AND XN_ITEM_TYPE=5 '
+			PRINT @CCMD
+			EXEC SP_EXECUTESQL @CCMD		
+			SET @cStep = 100
+			
+			SET @CCMD = 'UPDATE ' + @CTEMPDETAILTABLE1 + ' WITH (ROWLOCK)  SET '+@CKEYFIELD1+' = '''+@CKEYFIELDVAL1+''' where sp_id='''+LTRIM(RTRIM(@NSPID))+''' '
+			
+			PRINT @CCMD
+			EXEC SP_EXECUTESQL @CCMD
+						
+			SET @cStep = 104
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 					
+			SET @CCMD = 'UPDATE ' + @CTEMPDETAILTABLE2 + ' WITH (ROWLOCK)  SET MEMO_ID = '''+@CKEYFIELDVAL1+''' where  sp_id='''+LTRIM(RTRIM(@NSPID))+''' '
+			
+			PRINT @CCMD
+			EXEC SP_EXECUTESQL @CCMD
+			
+			
+			SET @cStep = 106 
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 					
+			SET @CCMD = 'UPDATE ' + @CTEMPDETAILTABLE5 + ' WITH (ROWLOCK)  SET MEMO_ID = '''+@CKEYFIELDVAL1+''' where sp_id='''+LTRIM(RTRIM(@NSPID))+''''
+			
+			PRINT @CCMD
+			EXEC SP_EXECUTESQL @CCMD
+
+			
+			SET @cStep = 108
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+			
+			IF @NENTRYMODE=5
+			BEGIN
+				SET @CCMD=N'UPDATE '+@CTEMPDETAILTABLE4+' WITH (ROWLOCK)  SET INV_ID='''+@CKEYFIELDVAL1+''' and sp_id='''+LTRIM(RTRIM(@NSPID))+''''
+				EXEC SP_EXECUTESQL @CCMD
+			END
+						
+			SET @cStep = 112
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+			
+			SET @CCMD=N'SELECT TOP 1 @CREFAPPMEMOIDOUT = REF_INV_ID FROM ' + @CTEMPMASTERTABLE + ' A (NOLOCK) 
+						JOIN APM01106 B (NOLOCK) ON A.REF_INV_ID=B.MEMO_ID 
+						WHERE sp_id='''+LTRIM(RTRIM(@NSPID))+''' AND ISNULL(REF_INV_ID,'''')<>'''''
+						
+			EXEC SP_EXECUTESQL @CCMD,N'@CREFAPPMEMOIDOUT VARCHAR(40) OUTPUT',@CREFAPPMEMOIDOUT=@CREFAPPMEMOID OUTPUT
+			
+		END					-- END OF ADDMODE
+		ELSE				-- CALLED FROM EDITMODE
+		BEGIN				-- START OF EDITMODE
+		
+			SET @cStep = 114		-- GETTING ID INFO FROM TEMP TABLE
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+			
+			SELECT @CKEYFIELDVAL1=inv_id FROM wsl_inm01106_upload (NOLOCK) WHERE sp_id=@nSpId
+
+			-- UPDATING SENTTOHO FLAG
+			SET @CCMD = N'UPDATE ' + @CTEMPMASTERTABLE + ' WITH (ROWLOCK)  SET LAST_UPDATE=GETDATE()  where  sp_id='''+LTRIM(RTRIM(@NSPID))+''''
+			EXEC SP_EXECUTESQL @CCMD
+
+			----Application need to ensure that it is giving inv_id already generated in Edit of Invoice
+
+			SET @cStep = 116
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 											
+			
+			IF EXISTS (SELECT TOP 1 inv_id FROM wsl_bo_ref (NOLOCK) WHERE inv_id=@CKEYFIELDVAL1)
+				DELETE FROM wsl_bo_ref WITH (ROWLOCK) WHERE inv_id=@CKEYFIELDVAL1
+						
+			-- ENTRY IN AUDIT TRAIL (ONLY WHEN USER EXPLICITLY CLICKED ON EDIT BUTTON)
+
+			-- DELETING EXISTING ENTRIES FROM PAYMODE_XN_DET TABLE WHERE ROW_ID NOT FOUND IN TEMPTABLE
+			SET @cStep = 116.2		-- UPDATING TRANSACTION TABLE - DELETING EXISTING ENTRIES
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+			SELECT TOP 1 @cMissingRowId=a.row_id FROM PAYMODE_XN_DET A (NOLOCK) 
+			LEFT JOIN 
+			(SELECT row_id FROM WSL_PAYMODE_XN_DET_UPLOAD B (NOLOCK) WHERE sp_id=@nSpId) b
+			 ON A.row_ID =B.row_ID WHERE A.memo_id =@CMEMOID AND a.xn_type='WSL' AND b.row_id IS NULL
+
+			IF ISNULL(@cMissingRowId,'')<>''
+			BEGIN		
+				SET @CSTEP=116.5
+				EXEC SP_CHKXNSAVELOG 'WSL',@CSTEP,0,@CMEMOID,'',1
+			
+				DELETE A FROM PAYMODE_XN_DET A (NOLOCK) LEFT JOIN 
+				(SELECT row_id FROM WSL_PAYMODE_XN_DET_UPLOAD B (NOLOCK) WHERE sp_id=@nSpId) b
+				ON A.row_ID =B.row_ID WHERE A.memo_id =@CMEMOID AND a.xn_type='WSL' AND b.row_id IS NULL
+
+			END
+
+			 --- Removed this validation for Now as concept of Picklist generation is now made
+			 --- independent of Barcode by DInkar and now Dinkar need to revise this validation (Sanjay : 16-10-2023)
+			
+				--IF @NENTRYMODE=3 AND @NBOXUPDATEMODE<>1
+				--BEGIN
+		              
+				--	  INSERT INTO #ORDERSETOFF(ARTICLE_CODE,PARA1_CODE,PARA2_CODE,PARA3_CODE,Qty)
+				--	  SELECT B.ARTICLE_CODE ,B.PARA1_CODE ,B.PARA2_CODE ,B.PARA3_CODE ,
+				--	        -1*(SUM(A.QUANTITY)) AS QTY
+				--	  FROM	ind01106 A (NOLOCK)
+				--	  JOIN SKU B (NOLOCK) ON A.PRODUCT_CODE =B.PRODUCT_CODE 
+				--	  WHERE A.PS_ID=@CMEMOID
+				--	  GROUP BY B.ARTICLE_CODE ,B.PARA1_CODE ,B.PARA2_CODE ,B.PARA3_CODE
+
+
+				--END
+
+
+
+			SET @cStep = 120 
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 							
+			Delete From INV_ATTR_MST WITH (ROWLOCK) where xn_type= 'WSl' and memo_id= @CKEYFIELDVAL1
+		
+            
+			-- REVERTING BACK THE STOCK OF PMT W.R.T CURRENT ISSUE
+			SET @cStep = 122		-- REVERTING STOCK
+			EXEC SP_CHKXNSAVELOG 'WSL',@cStep,0,@nSpId,'',1
+
+			IF @NENTRYMODE=5 AND EXISTS (SELECT TOP 1 inv_id FROM MBO_WSR_WSL_LINK (NOLOCK) WHERE INV_ID=@CKEYFIELDVAL1)
+			BEGIN
+				DELETE FROM MBO_WSR_WSL_LINK WITH (ROWLOCK) WHERE INV_ID=@CKEYFIELDVAL1
+			END	
+
+
+		END					-- END OF EDITMODE
+		
+
+			 --- Removed this validation for Now as concept of Picklist generation is now made
+			 --- independent of Barcode by DInkar and now Dinkar need to revise this validation (Sanjay : 16-10-2023)
+
+		IF @NUPDATEMODE IN (1,2) 
+		BEGIN	
+
+		  --     INSERT INTO #ORDERSETOFF(ARTICLE_CODE,PARA1_CODE,PARA2_CODE,PARA3_CODE,Qty)
+				-- SELECT B.ARTICLE_CODE ,B.PARA1_CODE ,B.PARA2_CODE ,B.PARA3_CODE ,
+				--	        (SUM(A.QUANTITY)) AS QTY
+				-- FROM	wsl_ind01106_upload A (NOLOCK)
+				-- JOIN SKU B (NOLOCK) ON A.PRODUCT_CODE =B.PRODUCT_CODE 
+				-- WHERE A.sp_id=@nSpId
+				-- GROUP BY B.ARTICLE_CODE ,B.PARA1_CODE ,B.PARA2_CODE ,B.PARA3_CODE
+
+		
+
+				--EXEC SP3S_VALIDATE_INV_PICKLIST_QTY_NEW
+				--@cInvId=@CKEYFIELDVAL1,
+				--@nUpdatemode=@NUPDATEMODE,
+				--@nSpId=@nSpId,
+				--@cCurLocId=@CLOCID,
+				--@NBOXUPDATEMODE=@NBOXUPDATEMODE,
+				--@bOrderValidationFailed=@bOrderValidationFailed output ,
+				--@cErrormsg=@cErrormsg output 
+
+				--if isnull(@cErrormsg,'')<>''
+				--   Goto End_proc
+
+				 
+		
+              if  @NENTRYMODE=3 AND ISNULL(@BIS_BIN_TRANSFER,0)<>1
+              begin
+                  
+                  if @NUPDATEMODE =2
+                  	 Delete a from SalesOrderProcessing A (nolock) where XnType ='OrderInvoice' and memoid=@CKEYFIELDVAL1
+              
+                    Update A set MemoId =@CKEYFIELDVAL1 from PLM_SALESORDERPROCESSING_UPLOAD A (nolock) where sp_id =@NSPID and LEFT(memoid,5)='LATER'
+              
+                   INSERT INTO #ORDERSETOFF(memoid,refmemoid , ARTICLE_CODE,PARA1_CODE,PARA2_CODE,PARA3_CODE,Qty)
+                   select memoid,refmemoid , ARTICLECODE,PARA1CODE,PARA2CODE,PARA3CODE,sum(Qty) as Qty   
+                   FROM PLM_SALESORDERPROCESSING_UPLOAD (nolock)
+                   where sp_id=@NSPID 
+                   group by memoid,refmemoid , ARTICLECODE,PARA1CODE,PARA2CODE,PARA3CODE
+                   
+                    Update a set Qty =a.Qty +b.QTY 
+					from SalesOrderProcessing A (nolock)
+					join #ORDERSETOFF b on a.RefMemoId =b.refmemoid and a.MemoId =b.memoid and a.ArticleCode =b.article_code 
+					and a.Para1Code =b.para1_code and a.Para2Code =b.para2_code and a.Para3Code =b.para3_code 
+					where a.XnType ='OrderInvoice'
+
+                   ;with cte_salesOrder as
+                   (
+                     select  * 
+                     from SalesOrderProcessing A (nolock) 
+                     where MemoId=@CKEYFIELDVAL1
+                   )
+              
+                   INSERT SalesOrderProcessing	( ArticleCode,RefMemoId , MemoId, Para1Code, Para2Code, Para3Code, Qty, XnType ) 
+                    SELECT 	  a.Article_Code,a.RefMemoId, a.MemoId, a.Para1_Code, a.Para2_Code, a.Para3_Code,a.Qty,'OrderInvoice' XnType 
+                    FROM #ORDERSETOFF A (nolock)
+                    left join cte_salesOrder b on a.RefMemoId =b.refmemoid and a.MemoId =b.memoid and a.Article_Code =b.articlecode 
+                    and a.Para1_Code =b.para1code and a.Para2_Code =b.para2code and a.para3_code =b.para3code 
+                    where b.MemoId is null and isnull(a.refmemoid,'')<>''
+                   
+
+              end
+		
+
+		END
+		
+		SET @cStep = 130 
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 					
+		SET @cCmd=N'UPDATE a SET party_state_code=(CASE WHEN inv_mode=2 THEN ISNULL(LEFT(b.loc_gst_no,2),'''')
+					ELSE  (CASE WHEN ISNULL(c.registered_gst_dealer,0)=1 and c.ac_gst_no<>''URP'' THEN ISNULL(LEFT(c.ac_gst_no,2),'''') ELSE ISNULL(ac_gst_state_code,'''') END) END) FROM '+@cTempMasterTable+' a WITH (ROWLOCK) 
+					LEFT OUTER JOIN location b (NOLOCK) ON a.party_dept_id=b.dept_id
+					LEFT OUTER JOIN lmp01106 c (NOLOCK) ON a.ac_code=c.ac_code
+					where   a.sp_id='''+LTRIM(RTRIM(@NSPID))+''' and isnull(DOMESTIC_FOR_EXPORT,0)=1 '
+		
+		print @cCmd
+		EXEC SP_EXECUTESQL @cCmd
+
+		SET @cStep = 134 
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 					        
+
+        DECLARE @COUNTRY VARCHAR(10)
+       	
+		SET @cCmd=N'SELECT TOP 1 @COUNTRY=ISNULL(CON.COUNTRY_CODE,'''')
+		FROM '+@CTEMPMASTERTABLE+' a (NOLOCK) JOIN lmp01106 b (NOLOCK) ON a.ac_code=b.ac_code 
+		LEFT OUTER JOIN AREA AR (NOLOCK) ON AR.area_code =B.area_code 
+		LEFT OUTER JOIN CITY CT (NOLOCK) ON CT.CITY_CODE =AR.city_code 
+		LEFT OUTER JOIN state ST (NOLOCK) ON ST.state_code =CT.state_code 
+		LEFT OUTER JOIN regionM R (NOLOCK) ON R.region_code =ST.region_code
+		LEFT OUTER JOIN COUNTRY CON (NOLOCK) ON CON.COUNTRY_CODE=R.COUNTRY_CODE 
+		where    a.sp_id='''+LTRIM(RTRIM(@NSPID))+''''
+	    EXEC SP_EXECUTESQL @cCmd,N'@COUNTRY VARCHAR(10) OUTPUT',@COUNTRY OUTPUT
+		
+		SET @cStep = 136 
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 						    
+		SET @cCmd=N'UPDATE A set party_state_code=(CASE WHEN '''+@country+''' in 
+				(''0000000'','''') THEN isnull(ac_gst_state_code,''00'') else ''00'' END) FROM 
+				wsl_inm01106_upload a WITH (ROWLOCK)
+				LEFT OUTER JOIN lmp01106 b (NOLOCK) on a.ac_code=b.ac_code	
+				  WHERE sp_id='''+LTRIM(RTRIM(@NSPID))+''' AND ISNULL(party_state_code,'''')='''''
+        
+		EXEC SP_EXECUTESQL @cCmd	
+
+		SET @cStep = 138 
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 						    
+	    SET @cCmd=N'SELECT TOP 1 @cPartyStateCode=party_state_code FROM '+@CTEMPMASTERTABLE +' (NOLOCK) where   sp_id='''+LTRIM(RTRIM(@NSPID))+''''
+		EXEC SP_EXECUTESQL @cCmd,N'@cPartyStateCode CHAR(2) OUTPUT',@cPartyStateCode OUTPUT
+		
+		IF @cPartyStateCode IN ('') OR (@bGstBill=1 AND @cPartyStateCode='00' AND ISNULL(@COUNTRY,'')  IN('0000000',''))
+		BEGIN
+			SET @cErrormsg=' Invalid Party State code...Please check'
+			GOTO END_PROC
+		END
+
+		SET @cStep = 140 
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 					
+		----- Discuss this step with Sir (Why should we need to run this step)
+		IF @bGstBill=0
+		BEGIN
+			SET @CCMD = N'UPDATE ' + @CTEMPDETAILTABLE1 + ' WITH (ROWLOCK) SET HSN_CODE=''0000000000'',gst_percentage=0,
+						  igst_amount=0,cgst_amount=0,sgst_amount=0,xn_value_without_gst=0,xn_value_with_gst=0  
+						  where sp_id='''+LTRIM(RTRIM(@NSPID))+''''  
+			EXEC SP_EXECUTESQL @CCMD   
+		END
+			
+		SET @cStep = 142		-- UPDATING MASTER TABLE
+		EXEC SP_CHKXNSAVELOG 'WSL',@cStep,0,@nSpId,'',1
+		
+		UPDATE wsl_ind01106_upload  WITH (ROWLOCK)  set inv_id=@CKEYFIELDVAL1
+		WHERE sp_id=@nSpId
+
+		SET @cStep = 144		-- UPDATING MASTER TABLE
+		EXEC SP_CHKXNSAVELOG 'WSL',@cStep,0,@nSpId,'',1
+
+		-- UPDATING ROW_ID IN TEMP TABLES
+		SET @CCMD = N'UPDATE ' + @CTEMPDETAILTABLE1 + ' WITH (ROWLOCK)  SET dept_id='''+@cLocationId+''', 
+					  ROW_ID = ''' + @CLOCATIONID + ''' + CONVERT(VARCHAR(40), NEWID())
+					  WHERE sp_id='''+LTRIM(RTRIM(@NSPID))+''' AND LEFT(ROW_ID,5) = ''LATER'' '
+		EXEC SP_EXECUTESQL @CCMD
+			
+		SET @cStep = 148
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+		
+		SET @CCMD = N'UPDATE ' + @CTEMPDETAILTABLE2 + ' WITH (ROWLOCK) SET ROW_ID = ''' + @CLOCATIONID + ''' + CONVERT(VARCHAR(40), NEWID())
+					  WHERE sp_id='''+LTRIM(RTRIM(@NSPID))+''' AND LEFT(ROW_ID,5) = ''LATER'''
+		EXEC SP_EXECUTESQL @CCMD
+		
+		SET @cStep = 150
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+		
+		SET @CCMD = N'UPDATE ' + @CTEMPDETAILTABLE5 + ' WITH (ROWLOCK) SET ROW_ID = ''' + @CLOCATIONID + ''' + CONVERT(VARCHAR(40), NEWID())
+					  WHERE sp_id='''+LTRIM(RTRIM(@NSPID))+''' AND LEFT(ROW_ID,5) = ''LATER'''
+		EXEC SP_EXECUTESQL @CCMD
+
+
+
+		SET @cStep = 156		-- UPDATING TRANSACTION TABLE
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+		
+		SET @CCMD=N'UPDATE '+@CTEMPDETAILTABLE1+' WITH (ROWLOCK) SET DISCOUNT_PERCENTAGE=(DISCOUNT_AMOUNT*100/(INVOICE_QUANTITY*RATE))
+					WHERE INVOICE_QUANTITY<>0 AND MANUAL_DISCOUNT=1 and  sp_id='''+LTRIM(RTRIM(@NSPID))+''''
+		EXEC SP_EXECUTESQL @CCMD
+
+		SET @cStep = 158 
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 					
+		SET @CCMD=N'UPDATE '+@CTEMPDETAILTABLE1+' WITH (ROWLOCK) SET DISCOUNT_PERCENTAGE=0
+					WHERE INVOICE_QUANTITY=0 AND MANUAL_DISCOUNT=1 and  sp_id='''+LTRIM(RTRIM(@NSPID))+''''
+		EXEC SP_EXECUTESQL @CCMD
+
+		
+		SET @cStep = 160 
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 					
+		SET @CCMD=N'UPDATE a SET hsn_code=b.hsn_code FROM '+@CTEMPDETAILTABLE1+' a WITH (ROWLOCK) 
+					JOIN sku b WITH (NOLOCK) ON a.product_Code=b.product_code
+					JOIN article c WITH (NOLOCK) ON c.article_code=b.article_code
+					JOIN sectiond d WITH (NOLOCK) ON d.sub_section_code=c.sub_section_code
+					where  a.sp_id='''+LTRIM(RTRIM(@NSPID))+'''
+					'
+		EXEC SP_EXECUTESQL @CCMD
+
+
+		SET @cStep = 162		-- UPDATING TRANSACTION TABLE
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+		-- UPDATING PS ID COLUMN AS NULL TO AVOID FOREIGN KEY CONSTRAINT IF INVOICE IS THRU BOX ENTRY
+		SET @CCMD = N'IF EXISTS (SELECT INV_ID FROM '+@CTEMPMASTERTABLE+' (NOLOCK) WHERE sp_id='''+LTRIM(RTRIM(@NSPID))+''' AND ENTRY_MODE IN (1,3,4,5)  )
+						 UPDATE ' + @CTEMPDETAILTABLE1 + ' WITH (ROWLOCK) SET PS_ID=NULL where sp_id='''+LTRIM(RTRIM(@NSPID))+''''
+		EXEC SP_EXECUTESQL @CCMD
+
+		SET @cStep = 164 
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 							
+		DECLARE @bInsertOnly bit,@bUpdateXns BIT
+		
+		select @bInsertOnly=0,@bUpdateXns=0
+		
+		IF  @NUPDATEMODE=1
+			SET @bInsertOnly=1
+
+		
+		IF ISNULL(@CREFAPPMEMOID,'')<>''
+		BEGIN
+			SET @cStep = 174
+			EXEC SP_CHKXNSAVELOG 'WSL',@cStep,0,@nSpId,'',1
+
+			SELECT TOP 1 @CDEPT_ID=DEPT_ID FROM APD01106 WHERE MEMO_ID=@CREFAPPMEMOID
+						
+			SET @CCMD=N'IF OBJECT_ID(''TEMP_APPROVAL_RETURN_MST_'+LTRIM(RTRIM(@NSPID))+''',''U'') IS NOT NULL
+							DROP TABLE TEMP_APPROVAL_RETURN_MST_'+LTRIM(RTRIM(@NSPID))+'
+						
+						IF OBJECT_ID(''TEMP_APPROVAL_RETURN_DET_'+LTRIM(RTRIM(@NSPID))+''',''U'') IS NOT NULL
+							DROP TABLE TEMP_APPROVAL_RETURN_DET_'+LTRIM(RTRIM(@NSPID))+'
+						
+			SELECT CONVERT(VARCHAR(40),''LATER'') AS MEMO_ID,CONVERT(CHAR(10),''LATER'') AS MEMO_NO,INV_DT AS MEMO_DT,
+			''000000000000'' AS CUSTOMER_CODE,AC_CODE,2 AS MODE,0 AS SENT_FOR_RECON,LAST_UPDATE,0 AS CANCELLED
+			,USER_CODE,FIN_YEAR,'''' AS REMARKS,'''+@CDEPT_ID+''' AS DEPT_ID,BIN_ID
+			INTO TEMP_APPROVAL_RETURN_MST_'+LTRIM(RTRIM(@NSPID))+' FROM '+@CTEMPMASTERTABLE+' 
+			
+			SELECT CONVERT(VARCHAR(40),''LATER'') AS MEMO_ID,B.QUANTITY-ISNULL(C.RET_QTY,0) AS QUANTITY
+				  ,CONVERT(VARCHAR(40),''LATER'') AS ROW_ID,B.EMP_CODE,'''' AS REMARKS
+				  ,B.ROW_ID AS APD_ROW_ID,CONVERT(NUMERIC(3),0) AS AUTO_SRNO,A.BIN_ID
+			INTO  TEMP_APPROVAL_RETURN_DET_'+LTRIM(RTRIM(@NSPID))+'   
+			FROM APM01106 A WITH (NOLOCK)    
+			JOIN APD01106 B WITH (NOLOCK) ON A.MEMO_ID = B.MEMO_ID     
+			LEFT OUTER JOIN     
+			(
+				SELECT APD_ROW_ID,SUM(A.QUANTITY) AS RET_QTY 
+				FROM APPROVAL_RETURN_DET A WITH (NOLOCK)
+				JOIN APPROVAL_RETURN_MST MST WITH (NOLOCK) ON A.MEMO_ID=MST.MEMO_ID   
+				JOIN APD01106 B WITH (NOLOCK) ON A.APD_ROW_ID=B.ROW_ID 
+				JOIN APM01106 C WITH (NOLOCK) ON C.MEMO_ID=B.MEMO_ID    
+				WHERE C.CANCELLED=0 AND MST.CANCELLED=0
+				GROUP BY APD_ROW_ID
+			) C ON C.APD_ROW_ID=B.ROW_ID     
+			WHERE A.MEMO_ID='''+@CREFAPPMEMOID+''' AND A.CANCELLED=0
+			AND (B.QUANTITY-ISNULL(C.RET_QTY,0)) > 0
+			
+			DECLARE @CSNO VARCHAR(3)
+			SET @CSNO=0
+			UPDATE TEMP_APPROVAL_RETURN_DET_'+LTRIM(RTRIM(@NSPID))+' 
+			SET ROW_ID=''LATER''+@CSNO,AUTO_SRNO=@CSNO,@CSNO=@CSNO+1'
+			
+			PRINT ISNULL(@CCMD,'NULL ARM COMMAND')
+			EXEC SP_EXECUTESQL @CCMD
+			
+			SET @cStep = 176
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+			
+			EXEC SAVETRAN_APR
+			@NUPDATEMODE=1,
+			@NSPID=@NSPID,
+			@CFINYEAR=@CFINYEAR,
+			@BCALLEDFROMSLS=1,
+			@CMEMOIDOUTPUT=@CAPRMEMOID OUTPUT,
+			@CERRORMSG=@CERRORMSG OUTPUT
+			
+			IF ISNULL(@CERRORMSG,'')<>''
+				GOTO END_PROC
+				
+				
+				--CHANGES AGTER SAVETRAN APR CHANGES
+			
+		END
+
+LBLUPDATESTOCK:
+
+		EXEC SP3S_UPDATE_PMTSTOCK_WSL
+		@cMemoId=@cKeyFieldval1,
+		@bRevertFlag=0,
+		@NENTRYMODE=@NENTRYMODE,
+		@BIS_BIN_TRANSFER=@BIS_BIN_TRANSFER,
+		@BALLOWNEGSTOCK=@BALLOWNEGSTOCK,
+		@nSpId=@nSpId,
+		@BNEGSTOCKFOUND=@BNEGSTOCKFOUND OUTPUT
+		
+		IF @BNEGSTOCKFOUND=1
+			GOTO END_PROC
+
+		IF @NUPDATEMODE NOT IN (1,2)
+			GOTO END_PROC
+
+
+		
+		IF @nEntrymode=2
+		BEGIN
+			print 'Update invoice id link in packs slip'
+			--select @CKEYFIELDVAL1 as CKEYFIELDVAL1
+			UPDATE wps_mst WITH  (ROWLOCK)  SET wsl_inv_id= @CKEYFIELDVAL1 FROM 
+			(SELECT DISTINCT PS_ID FROM  WSL_ind01106_upload a (NOLOCK)  
+				WHere SP_ID=@nSpId) B WHERE B.PS_ID=WPS_MST.PS_ID
+	   END
+	   
+	   SET @cStep = 194.6
+	   EXEC SP_CHKXNSAVELOG 'WSL',@cStep,0,@nSpId,'',1				   
+	   /*
+			IF THE INVOICE IS MARKED AS BIN TRANSFER, THE STOCK NEEDS TO BE UPDATED FOR THE TARGET BIN ALSO.
+	   */	
+
+		
+		SET @cStep = 194.8
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+		
+		EXEC SP3S_CALTOTALS_WSL @nUpdatemode=@nUpdatemode,@cInvId=@CKEYFIELDVAL1,@nSpId=@nSpId,@bGstBill=@bGstBill,@COUNTRY='',
+		@NLOCREGISTER=@NLOCREGISTER,@bcallfrompackslip=@bcallfrompackslip,@NBOXUPDATEMODE=@NBOXUPDATEMODE, @CERRORMSG=@CERRORMSG OUTPUT,@CLOCID=@CLOCID,
+		@NPARTY_AMOUNT_FORTCS=@NPARTY_AMOUNT_FORTCS,@EDIT_CLICKED=@EDIT_CLICKED
+
+	
+
+		IF ISNULL(@CERRORMSG,'')<>''
+			GOTO END_PROC
+
+		IF @NUPDATEMODE=2
+		BEGIN
+
+			SET @cStep = 195		-- SETTTING UP ENVIRONMENT
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 	       
+
+		
+			IF ISNULL(@BCALLFROMPACKSLIP,0)=0 AND ISNULL(@BcALLedFROMRepickRate,0)=0
+			BEGIN
+			   IF EXISTS (SELECT TOP 1 a.inv_id FROM wsl_inm01106_upload a (NOLOCK) JOIN inm01106 b (NOLOCK) ON a.inv_id=b.inv_id
+						  WHERE a.sp_id=@nSpId AND (a.discount_percentage<>0 OR b.DISCOUNT_PERCENTAGE<>0 OR 
+						  a.bill_level_tax_method<>b.bill_level_tax_method))	
+				SET @bReUpdateAllInd=1
+			END	
+					   				
+		END
+				
+		SET @cStep = 268
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+		
+	
+		SET @cStep = 270
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+			
+		IF OBJECT_ID('tempdb..#tmpPsInd','U') IS NOT NULL
+			DROP TABLE #tmpPsInd
+           
+        SELECT DISTINCT ps_id INTO #tmpPsInd FROM wsl_INd01106_upload (NOLOCK)  WHERE sp_id=@nSpId
+
+		SET @cStep = 272
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+           
+        DECLARE @PS_ID VARCHAR(22),@WSLQTY NUMERIC(10,2),@PSQTY NUMERIC(10,2)
+    
+		SELECT TOP 1 @PS_ID=PS_ID,@WSLQTY=WSLQTY ,@PSQTY=PSQTY FROM 
+		(
+			SELECT A.PS_ID,SUM(QUANTITY) AS WSLQTY,PSQTY 
+			FROM wsl_INd01106_upload A WITH (NOLOCK) JOIN
+			(
+			SELECT a.PS_ID,SUM(QUANTITY) AS PSQTY FROM wps_det a WITH (NOLOCK)
+			JOIN #tmpPsInd b ON a.ps_id=b.ps_id
+			GROUP BY a.ps_id
+			)B ON A.ps_id=B.ps_id  WHERE sp_id=@nSpId
+			GROUP BY A.ps_id,PSQTY
+		) P WHERE WSLQTY <> PSQTY	
+					
+		IF ISNULL(@PSQTY,0)>0 
+		BEGIN
+				IF ISNULL( @WSLQTY,0) <> ISNULL(@PSQTY,0)
+				BEGIN
+					SET @CERRORMSG = 'STEP- ' + LTRIM(@cStep) + ' Mismatch between pack slip qty :'+ltrim(rtrim(str(@PSQTY,10,2)))+
+					' and wholesale qty :'+ltrim(rtrim(str(@WSLQTY,10,2)))+'  for the pack slip '+@PS_ID
+					EXEC SP_EXECUTESQL @CCMDOUTPUT
+				    GOTO END_PROC
+				END
+		END	     
+
+		SET @cStep = 272.2
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+		DECLARE @cWhereClause VARCHAR(1000)
+        SET @CWHERECLAUSE = ' SP_ID='''+LTRIM(RTRIM(@NSPID))+''''
+
+		SELECT @LUPDATEONLY=0
+		
+		SET @cStep = 272.4
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+
+    	EXEC UPDATEMASTERXN_OPT--UPDATEMASTERXN 
+			  @CSOURCEDB	= @CTEMPDBNAME
+			, @CSOURCETABLE = @CTEMPMASTERTABLENAME
+			, @CDESTDB		= ''
+			, @CDESTTABLE	= @CMASTERTABLENAME
+			, @CKEYFIELD1	= @CKEYFIELD1
+			, @BALWAYSUPDATE = 1
+			, @CFILTERCONDITION=@cWhereClause
+			, @LUPDATEONLY = @LUPDATEONLY
+			, @LINSERTONLY =  @BINSERTONLY
+			, @LUPDATEXNS =  @BINSERTONLY
+
+
+		SET @cStep = 272.7		-- UPDATING TRANSACTION TABLE - INSERTING NEW ENTRIES
+		EXEC SP_CHKXNSAVELOG 'WSL',@cStep,0,@nSpId,'',1
+			
+		DECLARE @CWHERECLAUSEInd VARCHAR(500)
+		SET @CWHERECLAUSEInd = @CWHERECLAUSE 
+
+		IF @nUpdatemode=2
+		BEGIN
+			IF @bReUpdateAllInd=1 ---handle Scenario mentioned as wsl#1 in File doc_scenarios
+				SET @CWHERECLAUSEInd = ' (SP_ID='''+LTRIM(RTRIM(@NSPID))+''' OR SP_ID='''+left(LTRIM(RTRIM(@nSPID)),38)+'ZZZ'')'
+
+			IF @bReUpdateAllInd=1 OR @nBoxupdatemode=0
+				update ind01106 with (rowlock) SET inv_id='XXXXXXXXXX',row_id=@CLOCATIONID  + CONVERT(VARCHAR(40), NEWID()) WHERE inv_id=@CKEYFIELDVAL1
+			ELSE
+				update ind01106 with (rowlock) SET inv_id='XXXXXXXXXX',row_id=@CLOCATIONID  + CONVERT(VARCHAR(40), NEWID()) WHERE inv_id=@CKEYFIELDVAL1 AND box_no=@NBOXNO
+		END
+		
+		SET @cStep = 272.75	
+		EXEC UPDATEMASTERXN_OPT--UPDATEMASTERXN
+				@CSOURCEDB	= @CTEMPDBNAME
+			, @CSOURCETABLE = @CTEMPDETAILTABLENAME1
+			, @CDESTDB		= ''
+			, @CDESTTABLE	= @CDETAILTABLENAME1
+			, @CKEYFIELD1	= 'ROW_ID'
+			, @BALWAYSUPDATE = 1
+			, @LINSERTONLY =  1
+			, @LUPDATEXNS =   1
+			, @lUpdateonly = 0
+			, @CFILTERCONDITION=@CWHERECLAUSEInd
+
+
+		SET @cStep = 272.8		-- UPDATING TRANSACTION TABLE - INSERTING NEW ENTRIES
+		EXEC SP_CHKXNSAVELOG 'WSL',@cStep,0,@nSpId,'',1
+
+		SElect @LUPDATEONLY=0
+
+		EXEC UPDATEMASTERXN_OPT--UPDATEMASTERXN 
+			  @CSOURCEDB	= @CTEMPDBNAME
+			, @CSOURCETABLE = @CTEMPDETAILTABLENAME2
+			, @CDESTDB		= ''
+			, @CDESTTABLE	= @CDETAILTABLENAME2
+			, @CKEYFIELD1	= 'ROW_ID'
+			, @BALWAYSUPDATE = 1
+			, @CFILTERCONDITION=@cWhereClause
+			, @lUpdateonly = @lUpdateonly
+			, @lInsertOnly=@bInsertOnly
+			, @LUPDATEXNS =  @BINSERTONLY
+
+		SET @cStep = 273
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,1,@nSpId,'',1	 								
+		EXEC UPDATEMASTERXN_OPT--UPDATEMASTERXN 
+			  @CSOURCEDB	= @CTEMPDBNAME
+			, @CSOURCETABLE = @CTEMPDETAILTABLENAME5
+			, @CDESTDB		= ''
+			, @CDESTTABLE	= @CDETAILTABLENAME5
+			, @CKEYFIELD1	= 'MEMO_ID'
+			,@BALWAYSUPDATE = 1
+			,@CFILTERCONDITION=@cWhereClause
+			, @lInsertOnly=@bInsertOnly
+			, @LUPDATEXNS =  @BINSERTONLY
+
+		SET @cStep = 274	--INSERTING ENTRIES IN MBO_WSR_WSL_LINK FOR ENTRY MODE 5
+		EXEC SP_CHKXNSAVELOG 'WSL',@cStep,0,@nSpId,'',1
+		
+		IF @NENTRYMODE=5
+		BEGIN
+			EXEC UPDATEMASTERXN_OPT--UPDATEMASTERXN 
+				  @CSOURCEDB	= @CTEMPDBNAME
+				, @CSOURCETABLE = @CTEMPDETAILTABLE4
+				, @CDESTDB		= ''
+				, @CDESTTABLE	= 'MBO_WSR_WSL_LINK'
+				, @CKEYFIELD1	= 'INV_ID'
+				, @LINSERTONLY  = 1
+				,@CFILTERCONDITION=@cWhereClause
+				, @LUPDATEXNS =  @BINSERTONLY
+		END
+
+
+		if exists ( SELECT TOP 1 'U' FROM WSL_xnBoxDetails_upload WHERE SP_ID=@NSPID)
+		begin
+		   
+		   SET @BINSERTONLY=1
+		   SET @LUPDATEONLY=0
+		   IF @NUPDATEMODE <>1 AND  EXISTS (SELECT TOP 1'U' FROM XNBOXDETAILS A (NOLOCK) WHERE A.REF_MEMO_ID =@CKEYFIELDVAL1 
+		        AND A.XN_TYPE ='WSL' AND BOX_NO =@NBOXNO)
+			BEGIN
+			   SET @LUPDATEONLY=1
+			   SET @BINSERTONLY=0
+			END
+
+			UPDATE WSL_xnBoxDetails_upload SET REF_MEMO_ID =@CKEYFIELDVAL1 WHERE SP_ID=@NSPID
+			print '##check Wsl_XNBOXDETAILS_UPLOAD'
+		
+	
+
+		   EXEC UPDATEMASTERXN_OPT--UPDATEMASTERXN 
+			  @CSOURCEDB	= @CTEMPDBNAME
+			, @CSOURCETABLE = @CTEMPXNBOXDETAILSNAME
+			, @CDESTDB		= ''
+			, @CDESTTABLE	= @CxnBoxDetails
+			, @CKEYFIELD1	= 'Ref_memo_id'
+			, @CKEYFIELD2    ='xn_type'
+			, @CKEYFIELD3   ='Box_no'
+			, @BALWAYSUPDATE = 1
+			, @CFILTERCONDITION=@cWhereClause
+			, @LINSERTONLY =  @BINSERTONLY
+		     ,@LUPDATEONLY  =@LUPDATEONLY
+		    , @LUPDATEXNS =  1 
+
+		
+
+
+		end
+			
+	    IF ISNULL(@CERRORMSG,'')='' and @nUpdatemode<>3 
+	    begin
+		   SET @cStep = 274.2
+		   EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+		   EXEC SP3S_VALIDATE_GST_PERCENTAGE @CXNTYPE='WSL',@CXNID=@CKEYFIELDVAL1,@CCURDEPT_ID=@CLOCID,@CERRORMSG=@CERRORMSG OUTPUT  
+	    end
+	
+		SET @cStep = 274.4
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+ValidateFinal:
+	
+	--if @@spid=162
+	--begin
+	--	select 'check subtotal-1',* from wsl_inm01106_upload where sp_id=@nSpid
+	--	select 'check subtotal-2',* from inm01106 where inv_id=@CKEYFIELDVAL1
+
+	--end
+		EXEC VALIDATEXN
+				@CXNTYPE	= 'WSL'  
+			, @CXNID	= @CKEYFIELDVAL1
+			, @NUPDATEMODE = @NUPDATEMODE			
+			, @CCMD		= @CCMDOUTPUT OUTPUT
+			, @cUserCode = @cWizappUserCode
+			
+		IF @CCMDOUTPUT <> ''
+		BEGIN
+			SET @CERRORMSG = 'STEP- ' + LTRIM(@cStep) + ' DATA VALIDATION ON Final Data FAILED : ' + @CCMDOUTPUT + '...'
+			GOTO END_PROC
+		END
+
+		DECLARE @CPARTY_DEPT_ID VARCHAR(4),@NINVMODE INT
+		SELECT @CPARTY_DEPT_ID= PARTY_DEPT_ID,@NINVMODE=INV_MODE   FROM INM01106 (nolock) WHERE INV_ID=@CKEYFIELDVAL1
+
+		IF @NINVMODE=2
+		BEGIN
+			EXEC VALIDATEXN_POSCATEGORY 'WSL',@CKEYFIELDVAL1,@NUPDATEMODE,@cparty_dept_id,@CERRORMSG OUTPUT 
+
+		  IF ISNULL(@CERRORMSG,'')<>''
+				GOTO END_PROC
+
+		END
+
+
+		IF @NUPDATEMODE<>1 and @NMODE=2
+		BEGIN
+		 EXEC SP3S_VALIDATE_SERVERLOCSTOCK @CKEYFIELDVAL1,@CERRORMSG OUTPUT,@NUPDATEMODE 
+
+			IF @CERRORMSG<>''
+			GOTO END_PROC
+	   END
+
+
+		--check credit limit of supplier
+		IF  ISNULL(@bcheckcreditlimit,0)=1
+		BEGIN
+
+				DECLARE @NETAMOUNT NUMERIC(10,2),@NCREDIT_LIMIT NUMERIC(18,2),@NLOC_LEDGER_BALANCE NUMERIC(18,2),
+				@CINMAC_CODE VARCHAR(10)
+
+				
+
+				SELECT TOP 1 @NETAMOUNT=a.NET_AMOUNT ,@NCREDIT_LIMIT=b.CREDIT_LIMIT  ,@CINMAC_CODE=A.AC_CODE 
+				FROM INM01106  A (nolock)
+				JOIN LMP01106 B (nolock) ON A.AC_CODE =B.AC_CODE 
+				WHERE CREDIT_LIMIT<>0
+				and a.inv_id=@CKEYFIELDVAL1
+		
+				DECLARE @tBal TABLE (ac_code CHAR(10),balance NUMERIC(14,2))
+
+				IF ISNULL(@NCREDIT_LIMIT,0)>0 
+				BEGIN
+					 IF @CLOCATIONID=@CHODEPTID
+					 BEGIN
+						 INSERT @tBal (ac_code,balance)
+						 EXEC SP3S_GET_CREDIT_LIMIT	
+						 @cAcCode=@CINMAC_CODE,
+						 @cMemoId=@cKeyFieldVal1
+					 
+						 DECLARE @nFinalbalance NUMERIC(14,2)
+						 SELECT @NLOC_LEDGER_BALANCE=balance FROM @tBal
+					 END
+					 ELSE
+						SET @NLOC_LEDGER_BALANCE=@NLEDGER_BALANCE
+						
+		        	 set @nFinalbalance=isnull(@NLOC_LEDGER_BALANCE,0)+@NETAMOUNT
+					 									
+					 IF  @NCREDIT_LIMIT< @nFinalbalance
+					 BEGIN
+				         SET @BCREDITLimitCrossed=1
+						 SET @CERRORMSG='PARTY CREDIT LIMIT IS BEING VIOLATED LIMIT : '+ltrim(rtrim(STR(@NCREDIT_LIMIT)))+
+						 'Current Ledger Balance :'+ltrim(rtrim(str(@NLOC_LEDGER_BALANCE)))+
+						 'Current Invoice Amount :'+ltrim(rtrim(str(@NETAMOUNT)))
+
+						 GOTO END_PROC
+
+						 
+						--PARTY CREDIT LIMIT IS BEING VIOLATED LIMIT : 150000
+						--CURRENT LEDGER BALANCE : 91560
+						--CURRENT INVOICE AMOUNT : 137500
+
+						--DO YOU HAVE PASSWOD TO BYPASS THIS LIMIT
+
+					 END
+
+				END
+
+			END
+
+
+		SET @cStep = 276
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+		
+		-- AFTER SUCCESSFUL SAVING , JUST DROP THE TEMP TABLES CREATED BY APPLICATION				
+	--	GOTO END_PROC
+	goto LBLAUTORECEIVECHALLAN
+
+LBLAPPROVEWSLGENINV:
+		
+		SET @cStep = 278
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+		
+		SELECT @BPURLOC=PUR_LOC FROM LOCATION (NOLOCK)  WHERE DEPT_ID=@CLOCATIONID
+		
+		IF @CMEMOID=''
+		BEGIN
+			SET @CERRORMSG='MEMO ID REQUIRED FOR STOCK TRANSFER APPROVAL......CANNOT PROCEED'
+			GOTO END_PROC
+		END
+		
+		SET @cStep = 280
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+		DECLARE @NAPPROVALSTATUS NUMERIC(1,0)
+		
+		IF @CLOCATIONID<>@CHODEPTID
+		BEGIN
+			SELECT @NAPPROVALSTATUS=APPROVED FROM INM01106 (NOLOCK)  WHERE INV_ID=@CMEMOID
+			
+			SET @cStep = 282
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+			IF @NAPPROVALSTATUS<>0
+			BEGIN
+				IF @NAPPROVALSTATUS=1					
+					UPDATE INM01106 WITH (ROWLOCK) SET  LAST_UPDATE=GETDATE() WHERE INV_ID=@CMEMOID
+				ELSE
+					SET @CERRORMSG='STOCK TRANSFER IS ALREADY '+(CASE WHEN @NAPPROVALSTATUS=1 THEN ' MARKED FOR REQUEST OF APPROVAL FROM HO ' 
+					WHEN @NAPPROVALSTATUS=2 THEN 'APPROVED BY HO' ELSE 'DISAPPROVED BY HO' END)
+			END
+			ELSE
+				UPDATE INM01106 WITH (ROWLOCK) SET Approved=1 ,  LAST_UPDATE=GETDATE() WHERE INV_ID=@CMEMOID
+		END	
+	 	ELSE
+	 	BEGIN
+		
+			SET @cStep = 284
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+	 		PRINT 'APPROVED BY HO'
+	 		
+			UPDATE INM01106 WITH (ROWLOCK) SET  APPROVED=(CASE WHEN @NAPPROVEMODE=1 THEN 2 ELSE 3 END),LAST_UPDATE=GETDATE()
+			WHERE INV_ID=@CMEMOID
+			
+			INSERT XN_APPROVAL_DET	WITH (ROWLOCK) ( XN_TYPE, XN_ID, APPROVED_BY_USER_CODE, APPROVED_ON, APPROVED_BY_USER_IP,
+			 APPROVED_BY_USER_COMPUTERNAME,APPROVED_BY_WINDOWUSER_NAME,APPROVED )  SELECT 'XNSWSL' AS XN_TYPE,@CMEMOID AS XN_ID,
+			 @CWIZAPPUSERCODE AS APPROVED_BY_USER_CODE,GETDATE() AS APPROVED_ON,
+			 @CCOMPUTERIP AS APPROVED_BY_USER_IP,@CMACHINENAME AS APPROVED_BY_USER_COMPUTERNAME,
+			 @CWINDOWUSERNAME AS APPROVED_BY_WINDOWUSER_NAME,@NAPPROVEMODE AS APPROVED
+			 
+			 SET @cStep=286
+			 EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1								 
+
+		END
+		
+		SET @CKEYFIELDVAL1=@CMEMOID
+
+		
+
+		GOTO END_PROC
+		
+	
+LBLUPDATEDISPATCHDETAILS:
+
+	IF @NUPDATEMODE=7
+	BEGIN
+		SET @cStep = 288
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+					
+		EXEC UPDATEMASTERXN_OPT--UPDATEMASTERXN
+				  @CSOURCEDB	= @CTEMPDBNAME
+				, @CSOURCETABLE = @CTEMPMASTERTABLENAME
+				, @CDESTDB		= ''
+				, @CDESTTABLE	= @CMASTERTABLENAME
+				, @CKEYFIELD1	= 'INV_ID'
+				,@CFILTERCONDITION=@cWhereClause
+		
+
+		SET @cStep = 290
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+		SET @CCMD = 'SELECT @CKEYFIELDVAL1 = ' + @CKEYFIELD1 + ' FROM '+@CTEMPMASTERTABLE +' (NOLOCK)  where sp_id='''+LTRIM(RTRIM(@NSPID))+''' '
+			
+		EXEC SP_EXECUTESQL @CCMD, N'@CKEYFIELDVAL1 VARCHAR(50) OUTPUT', 
+							   @CKEYFIELDVAL1 OUTPUT
+							   
+				
+		GOTO END_PROC		
+	END
+
+lblUPDATEDATE:
+	IF @NUPDATEMODE = 10
+	BEGIN
+		  
+
+		SET @cStep = 295
+	
+		DECLARE @DOLDMemoDT DATETIME
+		SET @cStep = 300
+			
+		SELECT TOP 1 @DOLDMemoDT=INV_DT FROM inM01106 (NOLOCK) WHERE INV_ID=@CMEMOID
+			
+		UPDATE INM01106 WITH (ROWLOCK) SET INV_DT=@dMemoDtPara,LAST_UPDATE=GETDATE() WHERE INV_ID=@CMEMOID
+		SET @CKEYFIELDVAL1=@CMEMOID
+			
+		SET @CERRORMSG = ''
+			
+		SET @cStep = 310
+			
+		EXEC VALIDATE_XN_DATA_FREEZE  'WSL',@CWIZAPPUSERCODE,@CMEMOID ,@dMemoDtPara,@CERRORMSG OUTPUT
+		IF @CERRORMSG <> '' 
+			GOTO END_PROC
+			
+			
+			
+		SET @cStep = 320
+		EXEC SP_VALIDATE_MEMODATE_OPT
+		@CXNTYPE='WSL',
+		@CXNID=@CMEMOID,
+		@CERRORMSG=@CERRORMSG OUTPUT
+			
+		IF @CERRORMSG <> ''
+			GOTO END_PROC
+
+	END
+
+
+	-- in case of sis location direct Receive challan & update pmt
+
+    LBLAUTORECEIVECHALLAN:
+	IF @NUPDATEMODE<>1 and @NMODE=2
+	BEGIN
+
+		   IF EXISTS(SELECT TOP 1 'U' FROM PARCEL_MST A (nolock) JOIN parcel_det B (nolock) ON A.parcel_memo_id=B.parcel_memo_id
+								WHERE REF_MEMO_ID=@CKEYFIELDVAL1 AND A.XN_TYPE='WSL')
+			 BEGIN	
+					IF EXISTS( SELECT TOP 1 'U' FROM   INM01106 A (NOLOCK) JOIN LOCATION L (NOLOCK) ON a.location_Code =L.DEPT_ID 
+	        			JOIN LOCATION L1 (NOLOCK) ON A.PARTY_DEPT_ID  =L1.DEPT_ID 
+	         			WHERE A.INV_ID=@CKEYFIELDVAL1 AND ISNULL(L.SERVER_LOC,0)=1  AND ISNULL(L1.SERVER_LOC,0)=1 
+	        			AND (ISNULL(L1.SIS_LOC ,0)=1 OR ISNULL(L.SIS_LOC ,0)=1 ) AND A.INV_MODE =2
+				   )
+				  BEGIN
+
+			 
+						 EXEC SP3S_INS_DOC_MIRROR_TABLES  1, @CKEYFIELDVAL1    
+						 declare @CMRRID varchar(50)
+
+						 EXEC SAVETRAN_MERGE_MIRROR_DOCWSL_DATA 
+							@CMEMOID = @CKEYFIELDVAL1,  
+							@DRECEIPTDT = @dInvDt, 
+							@DLOGINDT = @dInvDt, 
+							@CMEMONOPREFIX = 'GPUR', 
+							@CWIZAPPUSERCODE = '0000000', 
+							@CERRMSG = @CERRORMSG OUTPUT, 
+				            @BNEGSTOCKFOUND = @BNEGSTOCKFOUND OUTPUT, 
+							@CMRRID = @CMRRID OUTPUT ,
+							@BCALLEDFORSISLOC=1
+
+					end
+
+		
+		   END   
+
+	 end
+
+	 -- end process
+
+LBLUPDATEWSLORDERS:
+	---- This is no longer required as per discussion 	
+END TRY
+BEGIN CATCH
+	SET @CERRORMSG = 'PROCEDURE SAVETRAN_WSL: STEP- ' + @cStep + ' SQL ERROR: #' + LTRIM(STR(ERROR_NUMBER())) + ' ' + ERROR_MESSAGE()
+	-- SET @CRETCMD= N'SELECT '''+@CERRORMSG+''' AS ERRMSG, '''' AS MEMO_ID'
+		
+	GOTO END_PROC
+END CATCH
+	
+END_PROC:
+
+   --IN CASE OF ESTIMATE PRINT DONOT SAVE IN PERMANENT TABLE 
+  if @BEStimatePrint =1  
+  begin
+      
+       	INSERT @OUTPUT ( ERRMSG, MEMO_ID)
+	     VALUES ( ISNULL(@CERRORMSG,''), ISNULL(@CKEYFIELDVAL1,'') )
+	     
+	     select * from @OUTPUT
+	     
+         EXEC  SP3S_WSLPRINT_DYNAMIC @cMemoId= @CKEYFIELDVAL1,@cWHERE=''
+		 
+		 set @BNEGSTOCKFOUND=1
+		 set @CERRORMSG='EstimatePrint'
+		 	
+		
+  
+  end
+
+
+	
+	print 'last step:'+@cStep
+	
+	UPDATE inm01106 WITH (ROWLOCk) SET last_update=getdate() WHERE inv_id=@CKEYFIELDVAL1
+
+	IF @nUpdatemode IN (1,2,4,5,8) AND ISNULL(@CERRORMSG,'')=''
+	BEGIN
+		SET @cStep = 302
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+	
+		UPDATE A SET  TOTAL_BOX_NO=ISNULL(B.TOTAL_BOX_NO,0)
+			FROM inm01106 A  WITH (ROWLOCK) 
+			LEFT OUTER JOIN  
+			(    
+				SELECT INV_ID,COUNT(BOX_NO) AS TOTAL_BOX_NO
+				FROM 
+			(
+						   
+				SELECT INV_ID,PS_ID, BOX_NO 
+				FROM ind01106 (nolock)
+				WHERE ISNULL(BOX_NO,0)>0   
+				AND   inv_id=@CKEYFIELDVAL1
+				GROUP BY INV_ID,PS_ID, BOX_NO
+			) BOX   
+			GROUP BY INV_ID
+		) B ON  A.INV_ID = B.INV_ID 
+				where   a.inv_id=@CKEYFIELDVAL1
+	END	
+
+	
+	IF @@TRANCOUNT>0 
+	BEGIN
+		SET @cStep = 310
+		EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+	
+		IF ISNULL(@CERRORMSG,'')='' AND ISNULL(@CCMDOUTPUT,'')='' AND ISNULL(@BNEGSTOCKFOUND,0)=0  AND @bOrderValidationFailed=0
+		BEGIN
+			IF @EDIT_CLICKED=1 AND @NBOXUPDATEMODE<>1 AND @bcallfrompackslip=0
+                EXEC SP3S_CAPTURE_AUDIT_TRAIL 'WSL',@CMEMOID,'','',@NSPID,@CMACHINENAME,@CWINDOWUSERNAME,@CWIZAPPUSERCODE,0,'1900-01-01',@EDIT_CLICKED
+			 
+			  COMMIT  TRANSACTION
+			  update inm01106 with (rowlock) set LAST_UPDATE=GETDATE(),reconciled=0 WHERE inv_id=@CKEYFIELDVAL1
+
+		END	
+		ELSE
+		BEGIN
+			ROLLBACK
+			
+		END
+	END
+	
+	
+	 --AFTER CALLING SAVETRAN REMOVE THIS TABLE 
+	 DELETE A  FROM XNTYPE_CHECKSUM_MST A  WITH (ROWLOCK)  WHERE SP_ID=@NSPID
+
+	SET @cStep = 312
+	EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+	IF ISNULL(@CERRORMSG,'')='' AND ISNULL(@CCMDOUTPUT,'')='' AND @NUPDATEMODE IN (4,5,8)
+	BEGIN
+		IF @NUPDATEMODE=4
+			SET @CMSG='BOX NO. : '+LTRIM(RTRIM(STR(@NBOXNO)))+' DELETED SUCCESSFULLY......PLEASE ACKNOWLEDGE'	
+		ELSE
+		IF @NUPDATEMODE=5
+			SET @CMSG='BARCODE NO. : '+@CPRODUCTCODE+' DELETED SUCCESSFULLY......PLEASE ACKNOWLEDGE'		
+		ELSE
+			SET @CMSG='PACKING SLIP NO. : '+@CPSNO+' DELETED SUCCESSFULLY......PLEASE ACKNOWLEDGE'					
+			
+		SELECT @CMSG AS SUCCESSMSG	
+
+		GOTO LBLINSERTUPLOADMIRRORDOC
+	END
+	
+	ELSE	
+	IF ISNULL(@BNEGSTOCKFOUND,0)=0 AND @bOrderValidationFailed=0
+	BEGIN
+	    SET @cStep = 314
+	    EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+		INSERT @OUTPUT ( ERRMSG, MEMO_ID)
+				VALUES ( ISNULL(@CERRORMSG,''), ISNULL(@CKEYFIELDVAL1,'') )
+				
+			--select * from  @OUTPUT	
+        
+        IF @BSTOCKRSPLIMITCROSSED=0 AND ISNULL(@BCREDITLimitCrossed,0)=0 AND @NBOXUPDATEMODE=0 and object_id('tempdb..#TMPMEMO_REPAIR','u') is null
+		    SELECT * FROM @OUTPUT
+		IF @BSTOCKRSPLIMITCROSSED=1
+		    SELECT 1 AS STOCKRSPLIMITCROSSED,* FROM @OUTPUT	
+		IF @BCREDITLimitCrossed=1
+		    SELECT 1 AS CREDITLIMITCROSSED,* FROM @OUTPUT	
+
+        IF @NBOXUPDATEMODE>=1
+        BEGIN
+		    SET @cStep = 316
+		    EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1  
+		   
+            SELECT A.ERRMSG,A.MEMO_ID,B.BOX_NO FROM @OUTPUT A 
+            left JOIN
+            (
+            SELECT INV_ID,MAX(BOX_NO) AS BOX_NO FROM  IND01106  A (NOLOCK)
+            JOIN @OUTPUT B ON A.INV_ID=B.MEMO_ID
+            GROUP BY INV_ID
+            )B ON A.MEMO_ID=B.INV_ID
+            
+       END		
+	END	
+
+
+	IF ISNULL(@CERRORMSG,'')='' 
+    BEGIN
+		 SET @cStep = 318
+	     EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+      
+		if @NXNITEMTYPE=5
+		begin
+			      
+			   Declare @BSEND_TO_HO bit ,@DSEND_TO_HO_DT DateTime,@DSEND_TO_LOC_DT DateTime
+			   SELECT @BSEND_TO_HO=0,@DSEND_TO_HO_DT='',@DSEND_TO_LOC_DT=''
+
+			   if @CHODEPTID=@CLOCATIONID 
+			   begin
+
+			       if @NUPDATEMODE <>3
+				   begin
+				     set @DSEND_TO_LOC_DT=@dInvDt
+				   end
+
+					 UPDATE B SET SEND_TO_LOC_DT=@DSEND_TO_LOC_DT,
+					              SEND_TO_LOC_NO=inm.INV_NO 
+					 FROM IND01106 A (NOLOCK)
+					 JOIN hold_back_deliver_det B (NOLOCK) ON A.PRODUCT_CODE=B.PRODUCT_CODE
+					 join inm01106 inm (nolock) on a.inv_id=inm.inv_id 
+					 WHERE A.INV_ID =@CKEYFIELDVAL1
+			   
+			   end
+             
+			 
+			   if @CHODEPTID<>@CLOCATIONID  
+			   begin
+
+			       if @NUPDATEMODE <>3
+				   begin
+
+				      set  @BSEND_TO_HO=1
+					  set @DSEND_TO_HO_DT=@dInvDt 
+
+				   end 
+				    UPDATE B SET SEND_TO_HO=@BSEND_TO_HO,
+							 SEND_TO_HO_DT=@DSEND_TO_HO_DT,
+							 SEND_TO_HO_No=inm.inv_no 
+					FROM IND01106 A (NOLOCK)
+					JOIN hold_back_deliver_det B (NOLOCK) ON A.PRODUCT_CODE=B.PRODUCT_CODE
+					join inm01106 inm (nolock) on a.inv_id=inm.inv_id 
+					WHERE A.INV_ID =@CKEYFIELDVAL1
+
+
+				end
+
+		   end
+	 
+	IF @NBOXUPDATEMODE=1
+		GOTO LBLLAST	
+		 
+LBLINSERTUPLOADMIRRORDOC:
+    
+
+	
+   
+
+		 SET @cStep = 320
+		 EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1         
+
+         IF EXISTS(SELECT TOP 1'U' FROM location WHERE DEPT_ID=@CLOCID  AND server_loc=1 ) 
+         AND EXISTS(SELECT TOP 1 'U' FROM location A 
+                    JOIN INM01106 B ON A.dept_id=B.party_dept_id
+                    JOIN LOCATION C ON C.DEPT_ID=b.location_Code     
+					 WHERE A.server_loc=1 AND INV_ID=@CKEYFIELDVAL1 AND INV_MODE=2
+					  AND B.APPROVED=(CASE WHEN C.STN_APPROVAL = 1 THEN 2 ELSE B.APPROVED END) and isnull(a.SIS_LOC,0)=0  and  isnull(c.SIS_LOC,0)=0)
+         BEGIN
+			    SET @cStep = 322
+			    EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+
+                 IF EXISTS(SELECT TOP 1 'U' FROM PARCEL_MST A JOIN parcel_det B ON A.parcel_memo_id=B.parcel_memo_id
+                            WHERE REF_MEMO_ID=@CKEYFIELDVAL1 AND A.XN_TYPE='WSL')
+				 BEGIN	
+				  	SET @cStep = 324
+					EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+					
+					IF @NUPDATEMODE<>3
+				    	EXEC SP3S_INS_DOC_MIRROR_TABLES  1, @CKEYFIELDVAL1  
+					Else
+					begin
+					     
+						 
+					     Delete a from DOCWSL_INM01106_MIRROR a (nolock) where inv_id=@CKEYFIELDVAL1
+						 Delete a from DOCWSL_IND01106_MIRROR a (nolock) where inv_id=@CKEYFIELDVAL1
+
+						 IF EXISTS (SELECT TOP 1 'U' FROM INM01106 A (NOLOCK)
+						 JOIN PIM01106 B (NOLOCK) ON  A.INV_ID =B.INV_ID 
+						  WHERE A.INV_ID =@CKEYFIELDVAL1 AND B.CANCELLED =0 AND B.RECEIPT_DT <>'')
+						  BEGIN
+						       
+							   EXEC SP3S_INS_DOC_MIRROR_TABLES  1, @CKEYFIELDVAL1  
+
+						  END
+
+					end
+							
+
+				 END
+         END
+         ELSE
+         BEGIN
+		 	
+			SET @cStep = 324
+			EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+		    IF EXISTS( SELECT TOP 1 dept_id FROM LOCATION (NOLOCK) WHERE DEPT_ID =@CLOCATIONID AND ISNULL(SERVER_LOC,0) =1)
+				SET @CLOCATIONID=@CHODEPTID
+
+         END
+    END  
+	
+-------------------------------------------	
+
+LBLLAST:
+     
+	
+	IF OBJECT_ID('TEMPDB..#TMPMEMO_REPAIR','U') IS NOT NULL
+	BEGIN 
+		INSERT INTO #TMPMEMO_REPAIR(MEMO_ID,ERRMSG)
+		SELECT MEMO_ID,ERRMSG FROM @OUTPUT
+	END
+
+
+	SET @cStep = 330
+	EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+	
+	
+	if isnull(@BSTOCKRSPLIMITCROSSED,0)=0  --as discuss with anil sir donot remove Temp Data in case of limit stock cross
+	begin
+		EXEC SP_DELETEUPLOADTABLES 'WSL',@NSPID
+		DELETE FROM WSL_PSID WHERE SP_ID=Rtrim(ltrim(str(@@SPID)))
+		Delete a from Wsl_XNBOXDETAILS_UPLOAD A (nolock) where sp_id=@NSPID
+	end
+
+	SET @cStep = 332
+	EXEC SP_CHKXNSAVELOG 'wSL',@cStep,0,@nSpId,'',1
+	--LOG STARTTIME/ENDTIME
+	IF ISNULL(@CERRORMSG,'')='' AND ISNULL(@CCMDOUTPUT,'')='' AND ISNULL(@BNEGSTOCKFOUND,0)=0
+		EXEC SP3S_LOGPROCESSTIME 'WSL','SAVETRAN EXECUTION',@CKEYFIELDVAL1,@nSpId,1,@DSTARTTIME,@nUpdatemode
+
+END						-- SAVETRAN_WSL

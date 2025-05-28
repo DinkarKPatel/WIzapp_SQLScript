@@ -1,0 +1,3 @@
+---CREATE PROCEDURE SP3S_POPULATE_UPLOADMIRRORXN
+---- Need to retain this file so that this Proc gets removed by Monitor and 
+---- its reference from anywhere will remove the possibility of Upload_mirrorxn table usage

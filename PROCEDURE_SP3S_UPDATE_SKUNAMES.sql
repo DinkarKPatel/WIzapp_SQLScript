@@ -1,0 +1,163 @@
+create PROCEDURE SP3S_UPDATE_SKUNAMES
+(
+ @CMEMO_ID VARCHAR(50)='',
+ @CXN_TYPE VARCHAR(10)='IRR',
+ @CTABLENAME VARCHAR(50)='',
+ @CCOLUMNNAME VARCHAR(50)='',
+ @nUpdatemode int =0
+)
+
+AS
+BEGIN
+      
+   
+
+	   DECLARE @CERRORMSG VARCHAR(1000),@cStep VARCHAR(5)
+
+	   SET @CERRORMSG=''
+
+	   IF ( @CMEMO_ID='' or @CXN_TYPE='')
+	   RETURN
+
+BEGIN TRY
+
+	SET @cStep='10'
+	
+	IF @CXN_TYPE='PUR' AND @nUpdatemode=1
+	BEGIN
+		SET @cStep='20'
+
+		 DECLARE @cConsiderTaxAsPartofLc VARCHAR(2)
+	  
+		 SELECT TOP 1 @cConsiderTaxAsPartofLc=value from config (NOLOCK) where config_option='considerTaxAsPartofLc' 
+
+		 SET @cConsiderTaxAsPartofLc=ISNULL(@cConsiderTaxAsPartofLc,'')
+			print 'updating sku_names with pp'
+			UPDATE sn with (rowlock) SET 
+			lc=(A.PURCHASE_PRICE+(CASE WHEN @cConsiderTaxAsPartofLc='1' then ISNULL(SKU_OH.TAX_AMOUNT,0) ELSE 0 END)+ISNULL(SKU_OH.OTHER_CHARGES,0) +  
+			ISNULL(SKU_OH.ROUND_OFF,0) + ISNULL(SKU_OH.FREIGHT,0) + 
+			ISNULL(SKU_OH.EXCISE_DUTY_AMOUNT,0)+ISNULL(SKU_OH.VALUE_ADD,0)),
+			pp=(a.PURCHASE_PRICE + ISNULL(SKU_OH.EXCISE_DUTY_AMOUNT,0) +ISNULL(SKU_OH.VALUE_ADD,0)+ISNULL(sku_oh.depreciation,0) ),
+			pp_wo_dp=(a.PURCHASE_PRICE + ISNULL(SKU_OH.EXCISE_DUTY_AMOUNT,0) +ISNULL(SKU_OH.VALUE_ADD,0) ),
+	    	purchase_gst_amount=isnull(sku_oh.tax_amount,0) ,
+	    	PURCHASE_BILL_DT=a.inv_dt ,
+	    	PURCHASE_BILL_NO=a.INV_NO,
+	    	purchase_receipt_Dt=a.receipt_dt ,
+	    	PUR_MRR_NO=a.PUR_MRR_NO,
+	    	purchase_challan_no =a.challan_no  
+	 
+		FROM sku_names sn
+		JOIN  sku a (NOLOCK) ON a.product_code=sn.product_code
+		JOIN sku_oh (NOLOCK) ON a.product_code=sku_oh.product_code
+		JOIN pur_pid01106_upload c (NOLOCK) ON c.product_code=a.product_code
+		WHERE c.sp_id=@CMEMO_ID
+		
+		RETURN
+	END
+
+    BEGIN TRANSACTION
+	SET @cStep='30'
+	DECLARE @DTSQL NVARCHAR(MAX)
+	SELECT PRODUCT_CODE INTO #BARCODE FROM PID01106 (NOLOCK) WHERE 1=2
+
+	IF @CXN_TYPE IN('PUR','PO')
+	BEGIN
+	    SET @cStep='40'
+		
+		SET @DTSQL =N' SELECT PRODUCT_CODE 
+		FROM '+@CTABLENAME+' (NOLOCK) WHERE '+@CCOLUMNNAME+'='''+@CMEMO_ID+''' '
+		INSERT INTO #BARCODE
+		EXEC SP_EXECUTESQL @DTSQL
+		PRINT isnull(@DTSQL,'null dtsql')
+		
+		
+		SET @DTSQL =N' SELECT  SUBSTRING(PRODUCT_CODE,1, CHARINDEX(''@'',PRODUCT_CODE)-1) PRODUCT_CODE 
+		FROM '+@CTABLENAME+' (NOLOCK) WHERE '+@CCOLUMNNAME+'='''+@CMEMO_ID+''' and  PRODUCT_CODE like ''%@%'' 
+		group by SUBSTRING(PRODUCT_CODE,1, CHARINDEX(''@'',PRODUCT_CODE)-1)  '
+		INSERT INTO #BARCODE
+		EXEC SP_EXECUTESQL @DTSQL
+		PRINT isnull(@DTSQL,'null dtsql')
+
+
+	END
+	ELSE IF @CXN_TYPE='IRR'
+	BEGIN
+		SET @cStep='50'
+		INSERT INTO #BARCODE
+		SELECT PRODUCT_CODE 
+		FROM IRD01106 IRD (NOLOCK) where irm_memo_id =@CMEMO_ID
+		AND ISNULL(IRD.NEW_PRODUCT_CODE,'')='' AND  ISNULL(IRD.PRODUCT_CODE,'')<>''
+
+		INSERT INTO #BARCODE
+		select a.product_code 
+		from sku_names A (nolock)
+		join #BARCODE b on b.product_code =LEFT(A.PRODUCT_CODE, ISNULL(NULLIF(CHARINDEX ('@',A.PRODUCT_CODE)-1,-1),LEN(A.PRODUCT_CODE ))) 
+		where charindex('@',a.PRODUCT_CODE)>0 and charindex('@',b.PRODUCT_CODE)=0
+
+
+	END
+	ELSE IF @CXN_TYPE='SNC'
+	BEGIN
+		SET @cStep='60'
+		INSERT INTO #BARCODE
+		SELECT A.PRODUCT_CODE
+		FROM SNC_BARCODE_DET A (NOLOCK)
+		JOIN SNC_DET B (NOLOCK) ON A.REFROW_ID =B.ROW_ID 
+		JOIN SNC_MST C (NOLOCK) ON C.MEMO_ID =B.MEMO_ID 
+		WHERE C.MEMO_ID =@CMEMO_ID
+
+    END
+	ELSE IF @CXN_TYPE='TTM'--(job card)
+	BEGIN
+		SET @cStep='70'
+		INSERT INTO #BARCODE
+		SELECT A.PRODUCT_CODE
+		FROM ORD_PLAN_BARCODE_DET  A (NOLOCK)
+		JOIN ORD_PLAN_DET  B (NOLOCK) ON A.REFROW_ID =B.ROW_ID 
+		WHERE B.MEMO_ID =@CMEMO_ID
+
+    END
+	ELSE IF @CXN_TYPE='TTT'--Transfer to trading
+	BEGIN
+		SET @cStep='70'
+		INSERT INTO #BARCODE
+		SELECT A.PRODUCT_CODE
+		FROM TRANSFER_TO_TRADING_det  A (NOLOCK)
+		JOIN TRANSFER_TO_TRADING_mst  B (NOLOCK) ON A.memo_id =B.memo_id 
+		WHERE B.MEMO_ID =@CMEMO_ID
+
+    END
+
+	SET @cStep='80'
+	IF EXISTS (SELECT TOP 1 product_code FROM  sku_diff (NOLOCK) WHERE sp_id=@@spid)
+		DELETE FROM sku_diff WITH (ROWLOCK) WHERE sp_id=@@spid
+	
+	INSERT INTO sku_diff (product_code,diff_type,sp_id)
+	SELECT PRODUCT_CODE,99,@@SPID FROM #BARCODE
+	
+	SET @cStep='90'
+	EXEC SP3S_UPD_SKUNAMES_INFO 
+	@nSpId=@@spid
+
+END TRY
+BEGIN CATCH
+	SET @CERRORMSG = ' SQL ERROR: #' + LTRIM(STR(ERROR_NUMBER())) + ' ' + ERROR_MESSAGE()
+	PRINT 'ENTER CATCH OF SP3S_UPDATE_SKUNAMES :'+@cErrormsg 
+	GOTO END_PROC
+END CATCH
+	
+END_PROC:
+
+	IF @@TRANCOUNT>0
+	BEGIN
+		IF ISNULL(@CERRORMSG,'')='' 
+		   	BEGIN
+			   COMMIT TRANSACTION
+			END
+		ELSE
+			ROLLBACK
+	END
+	
+	
+
+END
