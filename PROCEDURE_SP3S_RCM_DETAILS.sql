@@ -21,7 +21,7 @@ BEGIN
    IF @CHODEPT_ID<>@CCURDEPT_ID
       RETURN
       
-  
+  --check Update in git hub
   IF @CXN_TYPE='PUR'    
   BEGIN
    IF @CMEMO_ID =''
